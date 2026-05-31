@@ -39,6 +39,7 @@ src/shared/types.ts          Shared protocol and data types
 scripts/smoke-test.ts        Fast local end-to-end test
 scripts/test-browser-parser.ts  Parser-only regression checks
 scripts/run-chess-verify.ts  Cheap real-model chess verification
+scripts/run-chess-match.ts  Full chess model-vs-model verification
 scripts/run-multiseed-suite.ts  Multi-seed suite smoke check
 scripts/run-benchmark.ts     Standard benchmark batch
 scripts/run-premium-benchmark.ts  Premium model benchmark batch
@@ -74,6 +75,7 @@ npm run build
 npm run parser:test
 npm run smoke
 npm run chess:verify
+npm run chess:match
 npm run suite:smoke
 ```
 
@@ -307,6 +309,7 @@ Current tasks:
 
 - `target-grid-duel`
 - `chess-opening-e4`
+- `chess-full-match`
 - `simple-checkout-popup`
 - `confirm-button-decoy`
 
@@ -317,6 +320,17 @@ Chess task notes:
 - Agents must click source square `e2`, then destination square `e4`.
 - Square buttons use `data-lvl-ref` and labels like `White pawn on e2` / `Empty square e4`.
 - No hurdles should be enabled for chess verification runs unless explicitly requested.
+
+Full chess match notes:
+
+- Use `chess-full-match` for model-vs-model chess games.
+- Agent A is White; Agent B is Black.
+- The orchestrator alternates turns on one shared board, not two independent runs.
+- Legal move validation is handled by `chess.js`.
+- No CPU opponent is used.
+- Thinking time is recorded as run latency, but there is no chess clock flag/forfeit.
+- Illegal moves do not immediately stop the game. The same side receives feedback and must retry with a legal move.
+- End states: checkmate, draw, or material adjudication at the move cap.
 
 Replay behavior:
 

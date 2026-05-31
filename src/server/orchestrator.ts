@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { CreateMatchInput, MatchRecord, RunRecord, TaskConfig, TraceStep } from '../shared/types.js';
+import { Chess, type Color, type PieceSymbol, type Square } from 'chess.js';
+import type { CreateMatchInput, MatchRecord, RunRecord, Scorecard, ScoreEvent, TaskConfig, TraceStep } from '../shared/types.js';
 import { ChromiumGameEnvironment } from './chromiumEnvironment.js';
 import { config } from './config.js';
 import { BarebonesHarness } from './harness.js';
@@ -89,6 +90,10 @@ export class MatchOrchestrator {
     if (!detail || this.cancelled.has(matchId)) return;
     await this.store.updateMatch(matchId, { status: 'running', startedAt: new Date().toISOString() });
     try {
+      if (detail.task.objective.kind === 'chess_match') {
+        await this.runChessMatch(matchId);
+        return;
+      }
       if (detail.match.runMode === 'parallel') {
         await Promise.all(detail.runs.map((run) => this.runOne(run.id)));
       } else {
@@ -104,6 +109,175 @@ export class MatchOrchestrator {
         endedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  private async runChessMatch(matchId: string) {
+    const state = await this.store.all();
+    const match = state.matches.find((item) => item.id === matchId);
+    if (!match) throw new Error(`Match not found ${matchId}`);
+    const task = state.tasks.find((item) => item.id === match.taskId);
+    if (!task) throw new Error(`Task not found ${match.taskId}`);
+    const whiteRun = state.runs.find((run) => run.matchId === matchId && run.role === 'agentA');
+    const blackRun = state.runs.find((run) => run.matchId === matchId && run.role === 'agentB');
+    if (!whiteRun || !blackRun) throw new Error('Chess match requires two model runs.');
+    const whiteModel = state.models.find((model) => model.id === whiteRun.modelId);
+    const blackModel = state.models.find((model) => model.id === blackRun.modelId);
+    const whiteHarnessConfig = state.harnesses.find((harness) => harness.id === whiteRun.harnessId);
+    const blackHarnessConfig = state.harnesses.find((harness) => harness.id === blackRun.harnessId);
+    if (!whiteModel || !blackModel || !whiteHarnessConfig || !blackHarnessConfig) throw new Error('Chess run dependencies missing.');
+
+    const chess = new Chess();
+    const env = new ChromiumGameEnvironment(task, match.seed, false);
+    const harnessByColor = {
+      w: new BarebonesHarness(whiteHarnessConfig, whiteModel),
+      b: new BarebonesHarness(blackHarnessConfig, blackModel),
+    } satisfies Record<Color, BarebonesHarness>;
+    const runByColor = { w: whiteRun, b: blackRun } satisfies Record<Color, RunRecord>;
+    const runStartedAt = { w: Date.now(), b: Date.now() } satisfies Record<Color, number>;
+    const maxPlies = Math.min(match.maxSteps || task.objective.maxPlies || 120, task.objective.maxPlies || 120);
+    const illegalCounts = { w: 0, b: 0 } satisfies Record<Color, number>;
+    let currentRunByColor = { w: whiteRun, b: blackRun } satisfies Record<Color, RunRecord>;
+
+    await this.store.updateRun(whiteRun.id, { status: 'running', startedAt: new Date().toISOString() });
+    await this.store.updateRun(blackRun.id, { status: 'running', startedAt: new Date().toISOString() });
+
+    try {
+      await env.reset();
+      await env.applyChessState(chessState(chess, 'Game started.'));
+
+      for (let ply = 0; ply < maxPlies; ply += 1) {
+        if (this.cancelled.has(match.id)) {
+          await this.store.updateRun(whiteRun.id, { status: 'cancelled', endedAt: new Date().toISOString() });
+          await this.store.updateRun(blackRun.id, { status: 'cancelled', endedAt: new Date().toISOString() });
+          return;
+        }
+        if (chess.isGameOver()) break;
+
+        const color = chess.turn();
+        const activeRun = currentRunByColor[color];
+        const harness = harnessByColor[color];
+        const observation = await env.currentObservation(ply);
+
+        await this.store.updateRun(activeRun.id, { status: 'waiting_for_model' });
+        const modelOutput = await harness.runStep({
+          runId: activeRun.id,
+          seed: activeRun.seed,
+          stepIndex: ply,
+          observation,
+          maxToolCalls: match.maxToolCalls,
+          timeoutMs: config.defaultTimeoutMs,
+        });
+
+        await this.store.updateRun(activeRun.id, {
+          status: 'executing_tool',
+          latencyMs: activeRun.latencyMs + modelOutput.latencyMs,
+          costUsd: activeRun.costUsd + modelOutput.costUsd,
+        });
+
+        const result = await env.executeBrowserTool(modelOutput.browserTool!, activeRun.id, ply);
+        const proposedMove = chessProposedMove(result.observation.pageState);
+        const scoreEvents = [...result.scoreEvents];
+        let legalMovePlayed = false;
+
+        if (!proposedMove) {
+          const reason = 'No complete source/destination chess move was proposed. Same player must retry with a legal move.';
+          illegalCounts[color] += 1;
+          scoreEvents.push(chessEvent(activeRun.id, ply, 'failure', -18, reason));
+          await env.applyChessState(chessState(chess, `${reason} ${chessStatus(chess)}`));
+        } else {
+          const move = tryChessMove(chess, proposedMove);
+          if (!move) {
+            const reason = `Illegal chess move ${proposedMove.from}${proposedMove.to}. Same player must retry with a legal move.`;
+            illegalCounts[color] += 1;
+            scoreEvents.push(chessEvent(activeRun.id, ply, 'failure', -18, reason));
+            await env.applyChessState(chessState(chess, `${reason} ${chessStatus(chess)}`));
+          } else {
+            legalMovePlayed = true;
+            scoreEvents.push(chessEvent(activeRun.id, ply, 'progress', 10, `Legal move played: ${move.san}.`));
+            await env.applyChessState(chessState(chess, chessStatus(chess)));
+          }
+        }
+
+        const step: TraceStep = {
+          id: randomUUID(),
+          runId: activeRun.id,
+          stepIndex: ply,
+          observation,
+          modelOutput,
+          toolCall: result.toolCall,
+          scoreEvents,
+          createdAt: new Date().toISOString(),
+        };
+        await this.store.addStep(step);
+
+        const updatedRun: RunRecord = {
+          ...activeRun,
+          stepCount: activeRun.stepCount + 1,
+          toolCallCount: activeRun.toolCallCount + result.toolCall.actions.length,
+          latencyMs: activeRun.latencyMs + modelOutput.latencyMs + result.toolCall.latencyMs,
+          costUsd: activeRun.costUsd + modelOutput.costUsd,
+        };
+        currentRunByColor[color] = updatedRun;
+        await this.store.updateRun(activeRun.id, {
+          status: 'running',
+          stepCount: updatedRun.stepCount,
+          toolCallCount: updatedRun.toolCallCount,
+          latencyMs: updatedRun.latencyMs,
+          costUsd: updatedRun.costUsd,
+        });
+
+        if (!legalMovePlayed) {
+          await sleep(120);
+          continue;
+        }
+        await sleep(120);
+      }
+
+      const result = chessResult(chess);
+      const whiteScorecard = chessScorecard({
+        color: 'w',
+        result,
+        run: currentRunByColor.w,
+        chess,
+        illegalCount: illegalCounts.w,
+        startedAt: runStartedAt.w,
+      });
+      const blackScorecard = chessScorecard({
+        color: 'b',
+        result,
+        run: currentRunByColor.b,
+        chess,
+        illegalCount: illegalCounts.b,
+        startedAt: runStartedAt.b,
+      });
+
+      const endedAt = new Date().toISOString();
+      await this.store.updateRun(whiteRun.id, {
+        status: 'completed',
+        endedAt,
+        latencyMs: Date.now() - runStartedAt.w,
+        scorecard: whiteScorecard,
+        failureLabels: whiteScorecard.failureLabels,
+        costUsd: whiteScorecard.costUsd,
+      });
+      await this.store.updateRun(blackRun.id, {
+        status: 'completed',
+        endedAt,
+        latencyMs: Date.now() - runStartedAt.b,
+        scorecard: blackScorecard,
+        failureLabels: blackScorecard.failureLabels,
+        costUsd: blackScorecard.costUsd,
+      });
+
+      const winnerRunId = result.winner === 'w' ? whiteRun.id : result.winner === 'b' ? blackRun.id : null;
+      await this.store.updateMatch(matchId, {
+        status: this.cancelled.has(matchId) ? 'cancelled' : 'completed',
+        endedAt,
+        winnerRunId,
+      });
+    } finally {
+      await env.dispose();
     }
   }
 
@@ -235,6 +409,162 @@ export class MatchOrchestrator {
       createdAt: now,
     };
   }
+}
+
+function chessProposedMove(value: Record<string, unknown>) {
+  const move = value.proposedMove;
+  if (!move || typeof move !== 'object' || Array.isArray(move)) return null;
+  const record = move as Record<string, unknown>;
+  if (typeof record.from !== 'string' || typeof record.to !== 'string') return null;
+  if (!/^[a-h][1-8]$/.test(record.from) || !/^[a-h][1-8]$/.test(record.to)) return null;
+  return {
+    from: record.from,
+    to: record.to,
+    promotion: typeof record.promotion === 'string' ? record.promotion : 'q',
+  };
+}
+
+function tryChessMove(chess: Chess, proposedMove: { from: string; to: string; promotion?: string }) {
+  try {
+    return chess.move({
+      from: proposedMove.from as Square,
+      to: proposedMove.to as Square,
+      promotion: proposedMove.promotion || 'q',
+    });
+  } catch {
+    return null;
+  }
+}
+
+function chessState(chess: Chess, gameStatus: string) {
+  return {
+    board: chessBoardMap(chess),
+    fen: chess.fen(),
+    turn: chess.turn(),
+    moveHistory: chess.history(),
+    legalMoves: chess.moves({ verbose: true }).map((move) => `${move.from}${move.to}${move.promotion ?? ''} (${move.san})`),
+    gameStatus,
+    confirmed: chess.isGameOver(),
+    clearSelection: true,
+  };
+}
+
+function chessBoardMap(chess: Chess) {
+  const output: Record<string, string> = {};
+  const board = chess.board();
+  for (let rankIndex = 0; rankIndex < board.length; rankIndex += 1) {
+    const rank = 8 - rankIndex;
+    for (let fileIndex = 0; fileIndex < board[rankIndex].length; fileIndex += 1) {
+      const piece = board[rankIndex][fileIndex];
+      if (!piece) continue;
+      const file = String.fromCharCode(97 + fileIndex);
+      output[`${file}${rank}`] = pieceGlyph(piece.color, piece.type);
+    }
+  }
+  return output;
+}
+
+function pieceGlyph(color: Color, type: PieceSymbol) {
+  const glyphs: Record<Color, Record<PieceSymbol, string>> = {
+    w: { p: '♙', r: '♖', n: '♘', b: '♗', q: '♕', k: '♔' },
+    b: { p: '♟', r: '♜', n: '♞', b: '♝', q: '♛', k: '♚' },
+  };
+  return glyphs[color][type];
+}
+
+function chessStatus(chess: Chess) {
+  if (chess.isCheckmate()) return 'checkmate';
+  if (chess.isStalemate()) return 'stalemate';
+  if (chess.isThreefoldRepetition()) return 'threefold repetition';
+  if (chess.isInsufficientMaterial()) return 'insufficient material';
+  if (chess.isDraw()) return 'draw';
+  if (chess.inCheck()) return `${chess.turn() === 'w' ? 'White' : 'Black'} to move, in check`;
+  return `${chess.turn() === 'w' ? 'White' : 'Black'} to move`;
+}
+
+function chessResult(chess: Chess): { winner: Color | null; reason: string } {
+  if (chess.isCheckmate()) {
+    return {
+      winner: chess.turn() === 'w' ? 'b' : 'w',
+      reason: 'checkmate',
+    };
+  }
+  if (chess.isDraw()) return { winner: null, reason: chessStatus(chess) };
+  const material = materialBalance(chess);
+  if (material > 0) return { winner: 'w', reason: 'adjudicated by material after move cap' };
+  if (material < 0) return { winner: 'b', reason: 'adjudicated by material after move cap' };
+  return { winner: null, reason: 'adjudicated draw after move cap' };
+}
+
+function materialBalance(chess: Chess) {
+  const values: Record<PieceSymbol, number> = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+  let total = 0;
+  for (const row of chess.board()) {
+    for (const piece of row) {
+      if (!piece) continue;
+      total += (piece.color === 'w' ? 1 : -1) * values[piece.type];
+    }
+  }
+  return total;
+}
+
+function chessScorecard(input: {
+  color: Color;
+  result: { winner: Color | null; reason: string };
+  run: RunRecord;
+  chess: Chess;
+  illegalCount: number;
+  startedAt: number;
+}): Scorecard {
+  const won = input.result.winner === input.color;
+  const drew = input.result.winner == null;
+  const taskSuccess = won ? 100 : drew ? 50 : 0;
+  const efficiency = clampScore(100 - Math.max(0, input.run.stepCount - 1) * 2);
+  const progress = clampScore(50 + materialBalance(input.chess) * (input.color === 'w' ? 5 : -5) + input.run.stepCount * 2);
+  const toolUseQuality = clampScore(100 - input.illegalCount * 18);
+  const robustness = 75;
+  const consistency = null;
+  const total = roundScore(
+    taskSuccess * 0.40
+    + efficiency * 0.15
+    + robustness * 0.10
+    + progress * 0.15
+    + toolUseQuality * 0.15
+    + (consistency ?? 75) * 0.05,
+  );
+  const failureLabels = won || drew ? [] : ['chess_loss'];
+  if (input.illegalCount > 0) failureLabels.push('illegal_chess_move');
+  return {
+    total,
+    taskSuccess,
+    efficiency,
+    robustness,
+    progress,
+    toolUseQuality,
+    consistency,
+    costUsd: roundScore(input.run.costUsd, 6),
+    latencyMs: Date.now() - input.startedAt,
+    failureLabels,
+    rubricVersion: `chess-0.1.0:${input.result.reason}`,
+  };
+}
+
+function chessEvent(
+  runId: string,
+  stepIndex: number,
+  dimension: ScoreEvent['dimension'],
+  delta: number,
+  reason: string,
+): ScoreEvent {
+  return { id: randomUUID(), runId, stepIndex, dimension, delta, reason };
+}
+
+function clampScore(value: number) {
+  return Math.max(0, Math.min(100, roundScore(value)));
+}
+
+function roundScore(value: number, digits = 2) {
+  return Number(value.toFixed(digits));
 }
 
 function sleep(ms: number) {

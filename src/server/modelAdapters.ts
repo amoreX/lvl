@@ -91,15 +91,14 @@ export function adapterFor(model: ModelConfig): ModelAdapter {
 
 function strongScript(input: ModelInput) {
   const elements = input.observation.elements;
-  const chessSource = elements.find((el) => /white pawn on e2/i.test(el.label));
-  const chessTarget = elements.find((el) => /empty square e4|destination square e4|square e4/i.test(el.label));
+  const chessMove = nextDeterministicChessMove(elements);
+  if (chessMove) {
+    return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${chessMove.from}); await tab.click(${chessMove.to}); return await tab.snapshot();`;
+  }
   const target = elements.find((el) => /target tile|real target|highlighted target/i.test(el.label));
   const close = elements.find((el) => /close|dismiss/i.test(el.label));
   const add = elements.find((el) => /add to cart/i.test(el.label));
   const confirm = elements.find((el) => /^confirm checkout$/i.test(el.label) || /^confirm$/i.test(el.label));
-  if (chessSource && chessTarget) {
-    return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${chessSource.ref}); await tab.click(${chessTarget.ref}); return await tab.snapshot();`;
-  }
   if (close) {
     return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${close.ref}); return await tab.snapshot();`;
   }
@@ -113,6 +112,25 @@ function strongScript(input: ModelInput) {
     return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${confirm.ref}); return await tab.snapshot();`;
   }
   return 'const tab = await browser.currentTab(); return await tab.snapshot();';
+}
+
+function nextDeterministicChessMove(elements: ModelInput['observation']['elements']) {
+  const plans = [
+    [/white pawn on e2/i, /empty square e4|destination square e4|square e4/i],
+    [/black pawn on e7/i, /empty square e5|square e5/i],
+    [/white knight on g1/i, /empty square f3|square f3/i],
+    [/black knight on b8/i, /empty square c6|square c6/i],
+    [/white bishop on f1/i, /empty square c4|square c4/i],
+    [/black knight on g8/i, /empty square f6|square f6/i],
+    [/white pawn on d2/i, /empty square d4|square d4/i],
+    [/black pawn on d7/i, /empty square d5|square d5/i],
+  ] as const;
+  for (const [fromPattern, toPattern] of plans) {
+    const from = elements.find((el) => fromPattern.test(el.label));
+    const to = elements.find((el) => toPattern.test(el.label));
+    if (from && to) return { from: from.ref, to: to.ref };
+  }
+  return null;
 }
 
 function chaoticScript(input: ModelInput) {

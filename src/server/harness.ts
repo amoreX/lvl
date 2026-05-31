@@ -45,7 +45,9 @@ export class BarebonesHarness {
       'Use exactly one browser tool call per step.',
       'The browser tool has mode="state" for inspection and mode="run" for restricted browser scripts.',
       'Prefer tab.snapshot(), indexed tab.click(ref), tab.input(ref, text), and verification after actions.',
-      'For chess tasks, click the source square first and then the destination square in the same script when possible.',
+      'For chess tasks, use the displayed legal moves, then click the source square first and destination square second in the same script when possible.',
+      'For full chess matches, do not keep trying the opening move after the position changes; always choose from the current legal moves list.',
+      'If your previous chess move was illegal, read the updated status/legal moves and retry a legal move for the same side; do not repeat the illegal move.',
       'Return JSON only: {"mode":"run","script":"..."}',
     ].join('\n');
   }

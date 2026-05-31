@@ -156,6 +156,16 @@ Current tasks:
   - No hurdles are enabled for this task.
   - Current objective verifies one opening move instead of playing a full game.
 
+- `chess-full-match`
+  - Full model-vs-model chess match path.
+  - Agent A is White; Agent B is Black.
+  - Agents alternate on one shared Chromium board.
+  - Legal move validation uses `chess.js`.
+  - No CPU/Stockfish opponent is involved.
+  - Thinking time is recorded through run latency, but there is no chess clock flag/forfeit.
+  - Illegal moves do not immediately stop the game. The same side gets feedback and must retry a legal move.
+  - The match can end by checkmate, draw, or material adjudication at the move cap.
+
 - `simple-checkout-popup`
   - Local checkout flow.
   - Agents add item to cart, handle popup, and confirm checkout.
@@ -299,6 +309,7 @@ npm run parser:test
 npm run build
 npm run smoke
 npm run chess:verify
+npm run chess:match
 npm run suite:smoke
 ```
 

@@ -25,6 +25,12 @@ type BrowserGameState = {
   events: Array<{ type: string; ref?: number; message: string; delta?: number }>;
   selectedSquare?: string | null;
   chessMove?: string | null;
+  proposedMove?: { from: string; to: string; promotion?: string } | null;
+  fen?: string;
+  turn?: 'w' | 'b';
+  moveHistory?: string[];
+  legalMoves?: string[];
+  gameStatus?: string;
 };
 
 export class ChromiumGameEnvironment {
@@ -55,6 +61,25 @@ export class ChromiumGameEnvironment {
     this.context = null;
     this.browser = null;
     this.page = null;
+  }
+
+  async currentObservation(stepIndex: number): Promise<Observation> {
+    return this.observe(stepIndex);
+  }
+
+  async applyChessState(input: {
+    board: Record<string, string>;
+    fen: string;
+    turn: 'w' | 'b';
+    moveHistory: string[];
+    legalMoves?: string[];
+    gameStatus: string;
+    confirmed?: boolean;
+    clearSelection?: boolean;
+  }) {
+    await this.requirePage().evaluate((state) => {
+      window.__lvl.applyChessState(state);
+    }, input);
   }
 
   async executeBrowserTool(input: BrowserToolInput, runId: string, stepIndex: number): Promise<{
@@ -194,6 +219,7 @@ export class ChromiumGameEnvironment {
       if (event.type === 'game_won') return scoreEvent(runId, stepIndex, 'task_success', 100, event.message);
       if (event.type === 'chess_move_success') return scoreEvent(runId, stepIndex, 'task_success', 100, event.message);
       if (event.type === 'chess_selected') return scoreEvent(runId, stepIndex, 'progress', 5, event.message);
+      if (event.type === 'chess_move_proposed') return scoreEvent(runId, stepIndex, 'progress', 0, event.message);
       if (event.type === 'checkout_confirmed') return scoreEvent(runId, stepIndex, 'task_success', 100, event.message);
       if (event.type === 'cart_added') return scoreEvent(runId, stepIndex, 'progress', 20, event.message);
       if (event.type === 'popup_closed') return scoreEvent(runId, stepIndex, 'robustness', 12, event.message);
@@ -260,7 +286,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       <span class="chip" id="score-chip">Score: 0/${targetScore}</span>
       <span class="chip" id="status-chip">Status: running</span>
     </div>
-    ${objective === 'target_game' ? renderTargetGame(targetScore) : objective === 'chess_move' ? renderChess(targetMove) : renderCheckout()}
+    ${objective === 'target_game' ? renderTargetGame(targetScore) : objective === 'chess_move' || objective === 'chess_match' ? renderChess(targetMove, objective) : renderCheckout()}
     <div id="result" class="result" hidden>Objective complete.</div>
   </main>
   <div id="popup" class="popup" data-open="false">
@@ -293,6 +319,12 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       board: JSON.parse(JSON.stringify(initialBoard)),
       selectedSquare: null,
       chessMove: null,
+      proposedMove: null,
+      fen: 'start',
+      turn: 'w',
+      moveHistory: [],
+      legalMoves: [],
+      gameStatus: 'running',
       wrongClicks: 0,
       decoyClicked: false,
       toolFailures: 0,
@@ -301,8 +333,12 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
     };
     function event(type, message, ref) { state.events.push({ type, message, ref }); }
     function render() {
-      document.getElementById('score-chip').textContent = objective === 'target_game' ? 'Score: ' + state.score + '/' + targetScore : (state.cart ? 'Cart ready' : 'Cart empty');
-      document.getElementById('status-chip').textContent = state.confirmed ? 'Status: complete' : 'Status: running';
+      document.getElementById('score-chip').textContent = objective === 'target_game'
+        ? 'Score: ' + state.score + '/' + targetScore
+        : objective === 'chess_match' || objective === 'chess_move'
+          ? 'Turn: ' + (state.turn === 'w' ? 'White' : 'Black')
+          : (state.cart ? 'Cart ready' : 'Cart empty');
+      document.getElementById('status-chip').textContent = state.confirmed ? 'Status: complete' : 'Status: ' + state.gameStatus;
       document.getElementById('result').hidden = !state.confirmed;
       const popup = document.getElementById('popup');
       popup.dataset.open = String(state.popupOpen);
@@ -345,6 +381,20 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       decoy(ref) { state.decoyClicked = true; state.wrongClicks++; state.clickedRefs.push(ref); event('decoy_clicked', 'Clicked a decoy target.', ref); render(); },
       tile(ref) { if (guardPopup(ref)) return; state.clickedRefs.push(ref); if (ref === state.targetRef) { state.score++; event('target_hit', 'Clicked the highlighted target tile.', ref); if (state.score >= targetScore) { state.confirmed = true; event('game_won', 'Reached the target score.', ref); } moveTarget(); } else { state.wrongClicks++; state.decoyClicked = true; event('decoy_clicked', 'Clicked a trap tile instead of the target.', ref); render(); } },
       chessSquare(square, ref) { chessSquare(square, ref); },
+      applyChessState(next) {
+        state.board = next.board;
+        state.fen = next.fen;
+        state.turn = next.turn;
+        state.moveHistory = next.moveHistory || [];
+        state.legalMoves = next.legalMoves || [];
+        state.gameStatus = next.gameStatus || 'running';
+        if (next.confirmed) state.confirmed = true;
+        if (next.clearSelection !== false) {
+          state.selectedSquare = null;
+          state.proposedMove = null;
+        }
+        render();
+      },
       snapshot() {
         const nodes = Array.from(document.querySelectorAll('[data-lvl-ref]')).filter((node) => {
           const el = node;
@@ -363,13 +413,13 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       flushEvents() { const out = state.events.slice(); state.events = []; return out; }
     };
     function renderChessBoard() {
-      if (objective !== 'chess_move') return;
+      if (objective !== 'chess_move' && objective !== 'chess_match') return;
       for (const btn of document.querySelectorAll('[data-square]')) {
         const square = btn.dataset.square;
         const piece = state.board[square] || '';
         btn.textContent = piece;
         btn.classList.toggle('selected', state.selectedSquare === square);
-        btn.classList.toggle('target-square', targetMove.slice(2) === square);
+        btn.classList.toggle('target-square', objective === 'chess_move' && targetMove.slice(2) === square);
         const squareName = square;
         const pieceName = pieceNameFor(piece);
         const targetHint = squareName === targetMove.slice(0, 2)
@@ -381,25 +431,37 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       }
       const selected = document.getElementById('selected-square');
       const played = document.getElementById('played-move');
+      const history = document.getElementById('move-history');
+      const legal = document.getElementById('legal-moves');
       if (selected) selected.textContent = state.selectedSquare || 'none';
       if (played) played.textContent = state.chessMove || 'none';
+      if (history) history.textContent = state.moveHistory.length ? state.moveHistory.join(' ') : 'none';
+      if (legal) legal.textContent = state.legalMoves.length ? state.legalMoves.join(', ') : 'none';
     }
     function chessSquare(square, ref) {
       if (state.confirmed) return;
       state.clickedRefs.push(ref);
       const piece = state.board[square];
       if (!state.selectedSquare) {
-        if (piece && isWhitePiece(piece)) {
+        if (piece && isTurnPiece(piece)) {
           state.selectedSquare = square;
           event('chess_selected', 'Selected ' + pieceNameFor(piece) + ' on ' + square + '.', ref);
         } else {
           state.wrongClicks++;
-          event('chess_illegal', 'Tried to select ' + square + ', but it has no white piece.', ref);
+          event('chess_illegal', 'Tried to select ' + square + ', but it is not a movable piece for the current turn.', ref);
         }
         render();
         return;
       }
       const move = state.selectedSquare + square;
+      if (objective === 'chess_match') {
+        state.proposedMove = { from: state.selectedSquare, to: square, promotion: 'q' };
+        state.chessMove = move;
+        state.selectedSquare = null;
+        event('chess_move_proposed', 'Proposed chess move ' + move + '.', ref);
+        render();
+        return;
+      }
       if (move === targetMove && isLegalOpeningMove(state.selectedSquare, square)) {
         state.board[square] = state.board[state.selectedSquare];
         delete state.board[state.selectedSquare];
@@ -412,7 +474,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       }
       state.wrongClicks++;
       event('chess_illegal', 'Illegal or incorrect chess move ' + move + '; expected ' + targetMove + '.', ref);
-      state.selectedSquare = piece && isWhitePiece(piece) ? square : null;
+      state.selectedSquare = piece && isTurnPiece(piece) ? square : null;
       render();
     }
     function isLegalOpeningMove(from, to) {
@@ -420,6 +482,12 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
     }
     function isWhitePiece(piece) {
       return ['♙','♖','♘','♗','♕','♔'].includes(piece);
+    }
+    function isBlackPiece(piece) {
+      return ['♟','♜','♞','♝','♛','♚'].includes(piece);
+    }
+    function isTurnPiece(piece) {
+      return state.turn === 'w' ? isWhitePiece(piece) : isBlackPiece(piece);
     }
     function pieceNameFor(piece) {
       return ({
@@ -447,7 +515,7 @@ function renderCheckout() {
   </div>`;
 }
 
-function renderChess(targetMove: string) {
+function renderChess(targetMove: string, objective: TaskConfig['objective']['kind']) {
   const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
   const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
   const squares = ranks.flatMap((rank) => files.map((file, fileIndex) => {
@@ -460,9 +528,13 @@ function renderChess(targetMove: string) {
     <div class="board" aria-label="Chess board">${squares}</div>
     <div class="notation">
       <strong>Chess objective</strong>
-      <p>Play <code>${escapeHtml(targetMove)}</code>: click the piece square first, then the destination square.</p>
+      ${objective === 'chess_match'
+        ? '<p>Choose a legal move from the displayed legal moves. Click the source square first, then the destination square.</p>'
+        : `<p>Play <code>${escapeHtml(targetMove)}</code>: click the piece square first, then the destination square.</p>`}
       <p>Selected square: <code id="selected-square">none</code></p>
       <p>Played move: <code id="played-move">none</code></p>
+      <p>Move history: <code id="move-history">none</code></p>
+      <p>Legal moves: <code id="legal-moves">none</code></p>
     </div>
   </div>`;
 }
@@ -505,6 +577,16 @@ declare global {
       decoy(ref: number): void;
       tile(ref: number): void;
       chessSquare(square: string, ref: number): void;
+      applyChessState(input: {
+        board: Record<string, string>;
+        fen: string;
+        turn: 'w' | 'b';
+        moveHistory: string[];
+        legalMoves?: string[];
+        gameStatus: string;
+        confirmed?: boolean;
+        clearSelection?: boolean;
+      }): void;
       snapshot(): {
         title: string;
         text: string;

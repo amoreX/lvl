@@ -42,6 +42,7 @@ The repository currently includes a runnable local MVP:
 - Barebones harness.
 - Real local browser game pages rendered in Chromium.
 - Interactive chess opening task with click-source/click-destination moves.
+- Full model-vs-model chess match task with legal move validation and no CPU opponent.
 - Deterministic popup hurdle.
 - Background match orchestrator with sequential and parallel modes.
 - Trace recording.
@@ -78,6 +79,7 @@ npm run build
 npm run parser:test
 npm run smoke
 npm run chess:verify
+npm run chess:match
 npm run suite:smoke
 npm run benchmark
 ```
@@ -97,6 +99,8 @@ Current browser tasks:
 
 - `target-grid-duel`: click highlighted tiles and avoid traps.
 - `chess-opening-e4`: play `1. e4` by clicking `e2` then `e4` on a full chess board.
+- `chess-full-match`: model-vs-model chess game; Agent A is White, Agent B is Black, legal moves are validated by `chess.js`, and thinking time is recorded but not used to flag.
+- Illegal chess moves do not immediately end the game. The same agent gets redirected with updated legal moves and can retry until the match reaches checkmate, draw, or move cap.
 - `simple-checkout-popup`: add item to cart, handle popup, confirm checkout.
 - `confirm-button-decoy`: click the real confirmation target.
 
