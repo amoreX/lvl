@@ -82,7 +82,7 @@ export class ChromiumGameEnvironment {
         }
 
         for (const inputAction of inputs) {
-          await page.locator(`[data-gauntlet-ref="${inputAction.ref}"]`).fill(inputAction.text);
+          await page.locator(`[data-lvl-ref="${inputAction.ref}"]`).fill(inputAction.text);
           actions.push({ action: 'input', tab_id: 'chromium', successful: true });
         }
         for (const keys of keyInputs) {
@@ -91,8 +91,8 @@ export class ChromiumGameEnvironment {
         }
         for (const ref of refs) {
           const blockedByPopup = await page.evaluate((targetRef) => {
-            if (window.__gauntlet.state.popupOpen && targetRef !== 7 && targetRef !== 9) {
-              window.__gauntlet.blockedClick(targetRef);
+            if (window.__lvl.state.popupOpen && targetRef !== 7 && targetRef !== 9) {
+              window.__lvl.blockedClick(targetRef);
               return true;
             }
             return false;
@@ -101,7 +101,7 @@ export class ChromiumGameEnvironment {
             actions.push({ action: 'click', tab_id: 'chromium', successful: true });
             continue;
           }
-          await page.locator(`[data-gauntlet-ref="${ref}"]`).click({ timeout: 2000 });
+          await page.locator(`[data-lvl-ref="${ref}"]`).click({ timeout: 2000 });
           actions.push({ action: 'click', tab_id: 'chromium', successful: true });
         }
       }
@@ -113,7 +113,7 @@ export class ChromiumGameEnvironment {
       actions.push({ action: 'browser_runtime', tab_id: 'chromium', successful: false, error });
       scoreEvents.push(scoreEvent(runId, stepIndex, 'failure', -8, error));
       await page.evaluate(() => {
-        window.__gauntlet.state.toolFailures += 1;
+        window.__lvl.state.toolFailures += 1;
       }).catch(() => undefined);
     }
 
@@ -144,18 +144,18 @@ export class ChromiumGameEnvironment {
     const hurdle = this.task.hurdles.find((item) => item.stepIndex === stepIndex);
     if (!hurdle) return;
     if (hurdle.type === 'popup') {
-      await this.requirePage().evaluate(() => window.__gauntlet.showPopup());
+      await this.requirePage().evaluate(() => window.__lvl.showPopup());
       events.push(scoreEvent(runId, stepIndex, 'robustness', 0, `Hurdle injected: ${hurdle.id}`));
     }
     if (hurdle.type === 'moving_target') {
-      await this.requirePage().evaluate(() => window.__gauntlet.moveTarget());
+      await this.requirePage().evaluate(() => window.__lvl.moveTarget());
       events.push(scoreEvent(runId, stepIndex, 'robustness', 0, `Hurdle injected: ${hurdle.id}`));
     }
   }
 
   private async observe(stepIndex: number): Promise<Observation> {
     const page = this.requirePage();
-    const data = await page.evaluate(() => window.__gauntlet.snapshot());
+    const data = await page.evaluate(() => window.__lvl.snapshot());
     const screenshot = await page.screenshot({ type: 'png', fullPage: false }).catch(() => null);
     return {
       url: page.url() || `chromium://task/${this.task.id}`,
@@ -172,7 +172,7 @@ export class ChromiumGameEnvironment {
   }
 
   private async flushPageEvents(runId: string, stepIndex: number) {
-    const events = await this.requirePage().evaluate(() => window.__gauntlet.flushEvents());
+    const events = await this.requirePage().evaluate(() => window.__lvl.flushEvents());
     return events.map((event) => {
       if (event.type === 'target_hit') return scoreEvent(runId, stepIndex, 'progress', 22, event.message);
       if (event.type === 'game_won') return scoreEvent(runId, stepIndex, 'task_success', 100, event.message);
@@ -237,8 +237,8 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
     <div class="modal">
       <h2>Obstacle popup</h2>
       <p>This popup blocks the task until it is closed.</p>
-      <button data-gauntlet-ref="7" data-label="Close obstacle popup" onclick="window.__gauntlet.closePopup()">Close obstacle popup</button>
-      <button data-gauntlet-ref="9" data-label="Popup decoy trap" onclick="window.__gauntlet.decoy(9)">Popup decoy trap</button>
+      <button data-lvl-ref="7" data-label="Close obstacle popup" onclick="window.__lvl.closePopup()">Close obstacle popup</button>
+      <button data-lvl-ref="9" data-label="Popup decoy trap" onclick="window.__lvl.decoy(9)">Popup decoy trap</button>
     </div>
   </div>
   <script>
@@ -267,13 +267,13 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       const popup = document.getElementById('popup');
       popup.dataset.open = String(state.popupOpen);
       for (const btn of document.querySelectorAll('[data-kind="tile"]')) {
-        const ref = Number(btn.dataset.gauntletRef);
+        const ref = Number(btn.dataset.lvlRef);
         const isTarget = ref === state.targetRef;
         btn.className = 'tile ' + (isTarget ? 'target' : 'decoy');
         btn.textContent = isTarget ? 'Highlighted target tile' : 'Trap tile';
         btn.dataset.label = isTarget ? 'Highlighted target tile' : 'Trap tile';
       }
-      const confirm = document.querySelector('[data-gauntlet-ref="2"]');
+      const confirm = document.querySelector('[data-lvl-ref="2"]');
       if (confirm) {
         confirm.classList.toggle('disabled', !state.cart);
         confirm.dataset.label = state.cart ? 'Confirm Checkout' : 'Confirm Checkout disabled';
@@ -293,7 +293,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       }
       return false;
     }
-    window.__gauntlet = {
+    window.__lvl = {
       state,
       showPopup() { state.popupOpen = true; render(); },
       moveTarget,
@@ -304,12 +304,12 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       decoy(ref) { state.decoyClicked = true; state.wrongClicks++; state.clickedRefs.push(ref); event('decoy_clicked', 'Clicked a decoy target.', ref); render(); },
       tile(ref) { if (guardPopup(ref)) return; state.clickedRefs.push(ref); if (ref === state.targetRef) { state.score++; event('target_hit', 'Clicked the highlighted target tile.', ref); if (state.score >= targetScore) { state.confirmed = true; event('game_won', 'Reached the target score.', ref); } moveTarget(); } else { state.wrongClicks++; state.decoyClicked = true; event('decoy_clicked', 'Clicked a trap tile instead of the target.', ref); render(); } },
       snapshot() {
-        const nodes = Array.from(document.querySelectorAll('[data-gauntlet-ref]')).filter((node) => {
+        const nodes = Array.from(document.querySelectorAll('[data-lvl-ref]')).filter((node) => {
           const el = node;
           if (state.popupOpen) return el.closest('#popup') || el.id === 'popup';
           return !el.closest('#popup');
         });
-        const elements = nodes.map((el) => ({ ref: Number(el.dataset.gauntletRef), role: el.tagName.toLowerCase() === 'button' ? 'button' : 'text', label: el.dataset.label || el.textContent.trim(), state: el.disabled ? 'disabled' : 'enabled' }));
+        const elements = nodes.map((el) => ({ ref: Number(el.dataset.lvlRef), role: el.tagName.toLowerCase() === 'button' ? 'button' : 'text', label: el.dataset.label || el.textContent.trim(), state: el.disabled ? 'disabled' : 'enabled' }));
         return {
           title: document.title,
           text: document.body.innerText,
@@ -328,15 +328,15 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
 
 function renderTargetGame(_targetScore: number) {
   return `<div class="grid">
-    ${[11, 12, 13, 14, 15, 16, 17, 18, 19].map((ref) => `<button class="tile" data-kind="tile" data-gauntlet-ref="${ref}" data-label="Trap tile" onclick="window.__gauntlet.tile(${ref})">Tile</button>`).join('')}
+    ${[11, 12, 13, 14, 15, 16, 17, 18, 19].map((ref) => `<button class="tile" data-kind="tile" data-lvl-ref="${ref}" data-label="Trap tile" onclick="window.__lvl.tile(${ref})">Tile</button>`).join('')}
   </div>`;
 }
 
 function renderCheckout() {
   return `<div class="shop">
-    <button class="primary" data-gauntlet-ref="1" data-label="Add to cart" onclick="window.__gauntlet.addCart(1)">Add to cart</button>
-    <button data-gauntlet-ref="2" data-label="Confirm Checkout disabled" onclick="window.__gauntlet.confirm(2)">Confirm Checkout</button>
-    <button data-gauntlet-ref="3" data-label="Cancel order decoy" onclick="window.__gauntlet.decoy(3)">Cancel order decoy</button>
+    <button class="primary" data-lvl-ref="1" data-label="Add to cart" onclick="window.__lvl.addCart(1)">Add to cart</button>
+    <button data-lvl-ref="2" data-label="Confirm Checkout disabled" onclick="window.__lvl.confirm(2)">Confirm Checkout</button>
+    <button data-lvl-ref="3" data-label="Cancel order decoy" onclick="window.__lvl.decoy(3)">Cancel order decoy</button>
   </div>`;
 }
 
@@ -381,7 +381,7 @@ function escapeHtml(value: string) {
 
 declare global {
   interface Window {
-    __gauntlet: {
+    __lvl: {
       state: BrowserGameState;
       showPopup(): void;
       moveTarget(): void;

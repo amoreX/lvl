@@ -17,7 +17,7 @@ export const config = {
   openRouterApiKey: process.env.OPENROUTER_API_KEY || '',
   openRouterModel: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
   openRouterSiteUrl: process.env.OPENROUTER_SITE_URL || 'http://localhost:5173',
-  openRouterAppName: process.env.OPENROUTER_APP_NAME || 'AgentGauntlet Local',
+  openRouterAppName: process.env.OPENROUTER_APP_NAME || 'lvl Local',
   browserControlUrl: process.env.BROWSER_CONTROL_URL || 'http://127.0.0.1:34981',
   browserControlToken: process.env.BROWSER_CONTROL_TOKEN || '',
   browserMaxActionsPerCall: Number(process.env.BROWSER_MAX_ACTIONS_PER_CALL || 50),

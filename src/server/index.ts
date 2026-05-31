@@ -14,7 +14,7 @@ app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'agent-gauntlet-api' });
+  res.json({ ok: true, service: 'lvl-api' });
 });
 
 app.get('/api/bootstrap', async (_req, res, next) => {
@@ -108,7 +108,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 await store.load();
 
 app.listen(config.port, () => {
-  console.log(`AgentGauntlet API listening on http://localhost:${config.port}`);
+  console.log(`lvl API listening on http://localhost:${config.port}`);
 });
 
 const createMatchSchema = z.object({

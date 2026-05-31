@@ -151,8 +151,8 @@ function Shell({ children, error }: { children: React.ReactNode; error?: string 
     <div className="shell">
       <header className="topbar">
         <div className="brand">
-          <span className="mark">AG</span>
-          <span>AgentGauntlet</span>
+          <span className="mark">lvl</span>
+          <span>lvl</span>
         </div>
         <span className="status">local arena</span>
       </header>
@@ -276,7 +276,7 @@ function MatchList({
   selected: string | null;
   onSelect: (id: string) => void;
 }) {
-  if (!matches.length) return <p className="muted">No matches yet. Launch the first gauntlet.</p>;
+  if (!matches.length) return <p className="muted">No matches yet. Launch the first match.</p>;
   return (
     <div className="matchList">
       {matches.map((match) => {

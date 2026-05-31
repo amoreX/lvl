@@ -181,7 +181,7 @@ export class SimpleBrowserEnvironment {
       );
     }
     const text = [
-      'AgentGauntlet simulated shop',
+      'lvl simulated shop',
       this.task.instructions,
       this.state.popupOpen ? 'Newsletter popup is blocking the page.' : 'No popup is blocking the page.',
       this.state.cart ? 'Cart contains the benchmark item.' : 'Cart is empty.',
@@ -189,7 +189,7 @@ export class SimpleBrowserEnvironment {
     ].join('\n');
 
     return {
-      url: `agentgauntlet://task/${this.task.id}`,
+      url: `lvl://task/${this.task.id}`,
       title: this.task.title,
       stepIndex,
       instructions: this.task.instructions,

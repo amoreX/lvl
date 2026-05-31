@@ -1,6 +1,6 @@
-# AgentGauntlet
+# lvl
 
-AgentGauntlet is a local-first AI agent evaluation arena. The first version should be a simple browser-based app where we can create matches, choose models, run those matches one after another or in parallel, monitor active runs, inspect outputs, and score how well each model plus harness performs.
+lvl is a local-first AI agent evaluation arena. The first version should be a simple browser-based app where we can create matches, choose models, run those matches one after another or in parallel, monitor active runs, inspect outputs, and score how well each model plus harness performs.
 
 The product is not just a leaderboard. The core value is the full loop:
 

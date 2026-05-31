@@ -41,7 +41,7 @@ export class BarebonesHarness {
 
   private systemPrompt() {
     return [
-      'You are running inside AgentGauntlet.',
+      'You are running inside lvl.',
       'Use exactly one browser tool call per step.',
       'The browser tool has mode="state" for inspection and mode="run" for restricted Ghost-style browser scripts.',
       'Prefer tab.snapshot(), indexed tab.click(ref), tab.input(ref, text), and verification after actions.',
