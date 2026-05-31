@@ -276,6 +276,16 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
     .target-square { box-shadow: inset 0 0 0 4px #16a34a; }
     .coord { position: absolute; left: 6px; bottom: 4px; font-size: 11px; font-weight: 800; opacity: 0.78; }
     .notation { border: 1px solid #cbd5e1; border-radius: 16px; padding: 14px; background: #f8fafc; }
+    .replay-panel { grid-column: 1 / -1; border: 1px solid #cbd5e1; border-radius: 18px; padding: 16px; background: #fff7ed; }
+    .replay-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .replay-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .replay-controls button { min-height: 38px; padding: 8px 12px; }
+    .replay-controls input { flex: 1 1 240px; accent-color: #d97706; }
+    .replay-meta { display: grid; gap: 4px; margin-top: 10px; }
+    .replay-meta strong { font-size: 18px; }
+    .replay-meta span { color: #475569; }
+    .live-dot { display: inline-flex; align-items: center; gap: 6px; color: #166534; font-weight: 800; }
+    .live-dot::before { content: ""; width: 9px; height: 9px; border-radius: 999px; background: #22c55e; }
   </style>
 </head>
 <body>
@@ -303,6 +313,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
     const targetScore = ${JSON.stringify(targetScore)};
     const objective = ${JSON.stringify(objective)};
     const targetMove = ${JSON.stringify(targetMove)};
+    const matchId = new URLSearchParams(window.location.search).get('matchId');
     const initialBoard = {
       a1: '♖', b1: '♘', c1: '♗', d1: '♕', e1: '♔', f1: '♗', g1: '♘', h1: '♖',
       a2: '♙', b2: '♙', c2: '♙', d2: '♙', e2: '♙', f2: '♙', g2: '♙', h2: '♙',
@@ -438,6 +449,93 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       if (history) history.textContent = state.moveHistory.length ? state.moveHistory.join(' ') : 'none';
       if (legal) legal.textContent = state.legalMoves.length ? state.legalMoves.join(', ') : 'none';
     }
+    const replay = { frames: [], currentIndex: 0, playing: false, status: 'queued', pollTimer: null, playTimer: null };
+    async function loadReplay(keepPosition) {
+      if (!matchId || objective !== 'chess_match') return;
+      const panel = document.getElementById('replay-panel');
+      if (panel) panel.hidden = false;
+      try {
+        const response = await fetch('/api/matches/' + encodeURIComponent(matchId) + '/replay');
+        if (!response.ok) throw new Error('Replay failed to load');
+        const data = await response.json();
+        const wasAtEnd = replay.currentIndex >= Math.max(0, replay.frames.length - 1);
+        replay.frames = data.frames || [];
+        replay.status = data.match?.status || 'queued';
+        if (!keepPosition || wasAtEnd) replay.currentIndex = Math.max(0, replay.frames.length - 1);
+        replay.currentIndex = Math.max(0, Math.min(replay.currentIndex, Math.max(0, replay.frames.length - 1)));
+        applyReplayFrame();
+      } catch (error) {
+        const label = document.getElementById('replay-label');
+        if (label) label.textContent = error instanceof Error ? error.message : String(error);
+      }
+    }
+    function applyReplayFrame() {
+      const frame = replay.frames[replay.currentIndex];
+      if (!frame) return;
+      state.board = frame.board || {};
+      state.fen = frame.fen || 'start';
+      state.turn = frame.turn || 'w';
+      state.moveHistory = frame.moveHistory || [];
+      state.legalMoves = frame.legalMoves || [];
+      state.gameStatus = frame.status || replay.status || 'running';
+      state.chessMove = frame.move || 'none';
+      state.selectedSquare = null;
+      render();
+      const slider = document.getElementById('replay-slider');
+      const counter = document.getElementById('replay-counter');
+      const label = document.getElementById('replay-label');
+      const meta = document.getElementById('replay-meta');
+      const live = document.getElementById('replay-live');
+      if (slider) {
+        slider.max = String(Math.max(0, replay.frames.length - 1));
+        slider.value = String(replay.currentIndex);
+      }
+      if (counter) counter.textContent = (replay.currentIndex + 1) + ' / ' + Math.max(1, replay.frames.length);
+      if (label) label.textContent = frame.label || 'Position';
+      if (meta) meta.textContent = [frame.actor, frame.model, frame.move ? 'move ' + frame.move : '', frame.result].filter(Boolean).join(' · ');
+      if (live) {
+        live.textContent = replay.status === 'running' || replay.status === 'queued' ? 'Live match' : 'Final';
+        live.className = replay.status === 'running' || replay.status === 'queued' ? 'live-dot' : '';
+      }
+    }
+    function stepReplay(delta) {
+      replay.playing = false;
+      window.clearInterval(replay.playTimer);
+      replay.currentIndex = Math.max(0, Math.min(replay.currentIndex + delta, Math.max(0, replay.frames.length - 1)));
+      applyReplayFrame();
+    }
+    function toggleReplayPlayback() {
+      replay.playing = !replay.playing;
+      window.clearInterval(replay.playTimer);
+      if (!replay.playing) return;
+      replay.playTimer = window.setInterval(() => {
+        if (replay.currentIndex >= replay.frames.length - 1) {
+          replay.playing = false;
+          window.clearInterval(replay.playTimer);
+          return;
+        }
+        replay.currentIndex += 1;
+        applyReplayFrame();
+      }, 900);
+    }
+    function initReplay() {
+      if (!matchId || objective !== 'chess_match') return;
+      document.getElementById('replay-prev')?.addEventListener('click', () => stepReplay(-1));
+      document.getElementById('replay-next')?.addEventListener('click', () => stepReplay(1));
+      document.getElementById('replay-play')?.addEventListener('click', toggleReplayPlayback);
+      document.getElementById('replay-start')?.addEventListener('click', () => { replay.currentIndex = 0; applyReplayFrame(); });
+      document.getElementById('replay-end')?.addEventListener('click', () => { replay.currentIndex = Math.max(0, replay.frames.length - 1); applyReplayFrame(); });
+      document.getElementById('replay-slider')?.addEventListener('input', (event) => { replay.playing = false; replay.currentIndex = Number(event.target.value); applyReplayFrame(); });
+      window.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowLeft') { event.preventDefault(); stepReplay(-1); }
+        if (event.key === 'ArrowRight') { event.preventDefault(); stepReplay(1); }
+        if (event.key === 'Home') { event.preventDefault(); replay.currentIndex = 0; applyReplayFrame(); }
+        if (event.key === 'End') { event.preventDefault(); replay.currentIndex = Math.max(0, replay.frames.length - 1); applyReplayFrame(); }
+        if (event.key === ' ') { event.preventDefault(); toggleReplayPlayback(); }
+      });
+      loadReplay(false);
+      replay.pollTimer = window.setInterval(() => loadReplay(true), 1500);
+    }
     function chessSquare(square, ref) {
       if (state.confirmed) return;
       state.clickedRefs.push(ref);
@@ -496,6 +594,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       })[piece] || 'Empty square';
     }
     render();
+    initReplay();
   </script>
 </body>
 </html>`;
@@ -535,6 +634,25 @@ function renderChess(targetMove: string, objective: TaskConfig['objective']['kin
       <p>Played move: <code id="played-move">none</code></p>
       <p>Move history: <code id="move-history">none</code></p>
       <p>Legal moves: <code id="legal-moves">none</code></p>
+    </div>
+    <div class="replay-panel" id="replay-panel" hidden>
+      <div class="replay-head">
+        <strong>Match replay</strong>
+        <span id="replay-live"></span>
+      </div>
+      <div class="replay-controls">
+        <button id="replay-start" type="button">Start</button>
+        <button id="replay-prev" type="button">← Prev</button>
+        <button id="replay-play" type="button">Play</button>
+        <button id="replay-next" type="button">Next →</button>
+        <button id="replay-end" type="button">Latest</button>
+        <input id="replay-slider" type="range" min="0" max="0" value="0" aria-label="Replay move" />
+        <span id="replay-counter">0 / 0</span>
+      </div>
+      <div class="replay-meta">
+        <strong id="replay-label">Loading replay...</strong>
+        <span id="replay-meta">Use left and right arrow keys to step through moves.</span>
+      </div>
     </div>
   </div>`;
 }

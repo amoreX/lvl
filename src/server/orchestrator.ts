@@ -38,6 +38,10 @@ export class MatchOrchestrator {
       name: input.name || `${modelA.name} vs ${modelB.name}`,
       taskId: task.id,
       seed,
+      seedMode: input.seedMode || (input.seed == null ? 'random' : 'fixed'),
+      suiteIndex: input.suiteIndex,
+      suiteCount: input.suiteCount,
+      memoryMode: input.memoryMode || 'fresh',
       runMode: input.runMode,
       status: 'queued',
       maxSteps: input.maxSteps || task.maxSteps || config.defaultMaxSteps,
@@ -138,6 +142,10 @@ export class MatchOrchestrator {
     const maxPlies = Math.min(match.maxSteps || task.objective.maxPlies || 120, task.objective.maxPlies || 120);
     const illegalCounts = { w: 0, b: 0 } satisfies Record<Color, number>;
     let currentRunByColor = { w: whiteRun, b: blackRun } satisfies Record<Color, RunRecord>;
+    const historyByRunId: Record<string, TraceStep[]> = {
+      [whiteRun.id]: [],
+      [blackRun.id]: [],
+    };
 
     await this.store.updateRun(whiteRun.id, { status: 'running', startedAt: new Date().toISOString() });
     await this.store.updateRun(blackRun.id, { status: 'running', startedAt: new Date().toISOString() });
@@ -165,6 +173,7 @@ export class MatchOrchestrator {
           seed: activeRun.seed,
           stepIndex: ply,
           observation,
+          contextDump: match.memoryMode === 'context_dump' ? contextDump(historyByRunId[activeRun.id]) : undefined,
           maxToolCalls: match.maxToolCalls,
           timeoutMs: config.defaultTimeoutMs,
         });
@@ -210,6 +219,7 @@ export class MatchOrchestrator {
           createdAt: new Date().toISOString(),
         };
         await this.store.addStep(step);
+        historyByRunId[activeRun.id].push(step);
 
         const updatedRun: RunRecord = {
           ...activeRun,
@@ -296,6 +306,7 @@ export class MatchOrchestrator {
     const harness = new BarebonesHarness(harnessConfig, model);
     let observation = await env.reset();
     let currentRun = run;
+    const priorSteps: TraceStep[] = [];
     const runStarted = Date.now();
 
     await this.store.updateRun(runId, { status: 'running', startedAt: new Date().toISOString() });
@@ -312,6 +323,7 @@ export class MatchOrchestrator {
         seed: run.seed,
         stepIndex,
         observation,
+        contextDump: match.memoryMode === 'context_dump' ? contextDump(priorSteps) : undefined,
         maxToolCalls: match.maxToolCalls,
         timeoutMs: config.defaultTimeoutMs,
       });
@@ -333,6 +345,7 @@ export class MatchOrchestrator {
         createdAt: new Date().toISOString(),
       };
       await this.store.addStep(step);
+      priorSteps.push(step);
       currentRun = {
         ...currentRun,
         stepCount: stepIndex + 1,
@@ -470,6 +483,26 @@ function pieceGlyph(color: Color, type: PieceSymbol) {
     b: { p: '♟', r: '♜', n: '♞', b: '♝', q: '♛', k: '♚' },
   };
   return glyphs[color][type];
+}
+
+function contextDump(steps: TraceStep[]) {
+  if (!steps.length) return 'No previous turns for this agent.';
+  return steps.map((step) => {
+    const toolInput = step.toolCall?.input.mode === 'run'
+      ? step.toolCall.input.script
+      : step.toolCall?.input.mode ?? 'none';
+    const actions = step.toolCall?.actions.map((action) => `${action.action}:${action.successful ? 'ok' : action.error ?? 'failed'}`).join(', ') || 'none';
+    const score = step.scoreEvents.map((event) => `${event.delta >= 0 ? '+' : ''}${event.delta} ${event.dimension}: ${event.reason}`).join(' | ') || 'none';
+    const { screenshotDataUrl: _screenshotDataUrl, ...observation } = step.observation;
+    return [
+      `Turn ${step.stepIndex + 1}`,
+      `Observation:\n${JSON.stringify(observation, null, 2)}`,
+      `Model output:\n${step.modelOutput.rawText}`,
+      `Tool input:\n${toolInput}`,
+      `Tool actions: ${actions}`,
+      `Score events: ${score}`,
+    ].join('\n');
+  }).join('\n\n---\n\n');
 }
 
 function chessStatus(chess: Chess) {

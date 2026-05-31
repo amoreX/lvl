@@ -180,7 +180,10 @@ export class JsonStore {
       models: mergeById(state.models, seedModels),
       harnesses: mergeById(state.harnesses, seedHarnesses),
       tasks: mergeById(state.tasks, seedTasks),
-      matches: state.matches ?? [],
+      matches: (state.matches ?? []).map((match) => ({
+        ...match,
+        memoryMode: match.memoryMode ?? 'fresh',
+      })),
       runs: state.runs ?? [],
       steps: state.steps ?? [],
     };

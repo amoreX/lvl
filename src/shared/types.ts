@@ -11,6 +11,8 @@ export type RunStatus =
   | 'cancelled';
 
 export type RunMode = 'sequential' | 'parallel';
+export type SeedMode = 'fixed' | 'random';
+export type MemoryMode = 'fresh' | 'context_dump';
 
 export type ModelProvider = 'dummy' | 'openrouter' | 'manual';
 
@@ -89,6 +91,10 @@ export type CreateMatchInput = {
   agentA: { modelId: string; harnessId: string };
   agentB: { modelId: string; harnessId: string };
   seed?: number;
+  seedMode?: SeedMode;
+  suiteIndex?: number;
+  suiteCount?: number;
+  memoryMode?: MemoryMode;
   runMode: RunMode;
   maxSteps?: number;
   maxToolCalls?: number;
@@ -100,6 +106,10 @@ export type MatchRecord = {
   name: string;
   taskId: string;
   seed: number;
+  seedMode: SeedMode;
+  suiteIndex?: number;
+  suiteCount?: number;
+  memoryMode: MemoryMode;
   runMode: RunMode;
   status: EntityStatus;
   maxSteps: number;
@@ -155,6 +165,7 @@ export type Observation = {
 export type ModelInput = {
   system: string;
   observation: Observation;
+  contextDump?: string;
   budget: {
     maxTokens: number;
     maxToolCalls: number;

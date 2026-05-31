@@ -4,21 +4,21 @@ This file is the operating guide for AI agents working on lvl.
 
 ## Project Summary
 
-lvl is a local-first AI agent evaluation arena. It runs head-to-head matches between model + harness combinations inside reproducible browser tasks, records traces, scores runs, shows replays, and computes simple Elo standings.
+lvl is a local-first AI agent evaluation arena. The current product surface is model-vs-model chess: two model + harness combinations play on a reproducible Chromium chess board, traces are recorded, runs are scored, moves can be replayed, and simple Elo standings are computed.
 
 Core loop:
 
 ```text
 Create match
   -> run model through harness
-  -> execute browser tool in isolated Chromium
-  -> record trace and screenshot
+  -> execute browser tool in isolated Chromium chess board
+  -> record trace
   -> score run
-  -> compare runs
+  -> replay moves
   -> update analytics/Elo
 ```
 
-Do not treat this as a normal chatbot app. The important product surface is evidence: traces, screenshots, tool calls, score events, and replay.
+Do not treat this as a normal chatbot app. The important product surface is evidence: traces, tool calls, score events, and chess replay. Screenshots and element trees may exist in trace data, but the normal UI intentionally hides them unless a future debugging surface needs them.
 
 ## Current Stack
 
@@ -132,10 +132,11 @@ GET  /api/health
 GET  /api/bootstrap
 GET  /api/matches
 GET  /api/matches/:id
+GET  /api/matches/:id/replay
 POST /api/matches
 POST /api/matches/:id/cancel
 GET  /api/analytics
-GET  /task-pages/:taskId?seed=818
+GET  /task-pages/:taskId?seed=818&matchId=<matchId>
 ```
 
 ### Storage
@@ -179,10 +180,12 @@ Responsibilities:
 - Create runs.
 - Queue matches.
 - Run agents sequentially or in parallel.
+- For `chess-full-match`, run agents sequentially in turn order.
 - Execute model/harness/browser steps.
 - Persist trace steps.
 - Score runs.
 - Finish matches and choose winner.
+- Build chess replay frames for `/api/matches/:id/replay`.
 
 Do not put scoring policy inside the orchestrator. Keep scoring in `src/server/scoring.ts`.
 
@@ -198,8 +201,14 @@ It:
 
 - Builds model input.
 - Sends observation to model adapter.
+- Optionally includes an own-turn context dump when match `memoryMode` is `context_dump`.
 - Normalizes a browser tool call.
 - Uses the shared browser action parser for messy model responses.
+
+Memory modes:
+
+- `fresh`: send only the current observation/board state.
+- `context_dump`: also send that agent's own previous observations, raw model outputs, tool inputs, executed actions, and score events. Screenshots are excluded from the dump to avoid base64 bloat.
 
 It is intentionally simple, but now handles common model-output messiness such as JSON inside prose, fenced JSON, nested `arguments` objects, and script-only responses. Future harness improvements should remain versioned and measurable.
 
@@ -250,7 +259,7 @@ browser tool
   -> Playwright-backed runtime
   -> isolated Chromium context
   -> local task page
-  -> indexed DOM actions and screenshots
+  -> indexed DOM actions
 ```
 
 Current browser actions:
@@ -263,6 +272,8 @@ Current browser actions:
 - Select/dropdown parsing.
 - Keyboard press.
 - Screenshot.
+
+Normal replay UX hides screenshots and element-tree dumps. Keep the UI centered on what the model did, model output, score events, and board replay.
 
 Planned actions:
 
@@ -313,9 +324,11 @@ Current tasks:
 - `simple-checkout-popup`
 - `confirm-button-decoy`
 
+The main UI currently exposes only `chess-full-match`. Keep the other seeded tasks available for scripts/regression work unless the user asks to remove them.
+
 Chess task notes:
 
-- The current chess task verifies one move, not a full game.
+- `chess-opening-e4` verifies one move, not a full game.
 - It renders a full board in Chromium.
 - Agents must click source square `e2`, then destination square `e4`.
 - Square buttons use `data-lvl-ref` and labels like `White pawn on e2` / `Empty square e4`.
@@ -335,7 +348,12 @@ Full chess match notes:
 Replay behavior:
 
 - The selected match detail polls and updates while a match is running.
-- The run view shows a live frame with the latest browser screenshot/state.
+- The match history/log is a full-width table with match name, winner, competing models, start time, duration, and stored seed details.
+- Clicking a match opens the full trace/log modal for that match.
+- The trace log shows model actions, score/result lines, and formatted model output. Do not show the huge element tree or screenshot banner by default.
+- `open replay board` launches the chess board replay page with Start, Prev, Play, Next, Latest, slider, and arrow-key navigation.
+- Ongoing chess replay boards poll `/api/matches/:id/replay` so the latest move appears while the match runs.
+- Replay uses filters for `All logs`, `Agent A`, and `Agent B`; do not reintroduce agent POV tabs unless requested.
 - Users can create new matches while previous matches continue running.
 - Users can reopen previous matches from the match list.
 - Do not prioritize side-by-side comparison unless explicitly requested; replay means live/current inspection plus historical trace browsing.
@@ -390,6 +408,10 @@ Current UI is plain React/CSS, not Tailwind.
 
 Follow these rules:
 
+- Keep the New Match form chess-focused until the user asks to reintroduce other task types.
+- Do not show a separate top navbar; the `lvl` logo lives in the hero.
+- Do not show run mode for chess. Chess is sequential by design.
+- Keep match details out of the table until a row is clicked; detailed logs belong in the modal.
 - Maintain visible focus states.
 - Keep body text readable on mobile.
 - No emoji icons as UI controls.

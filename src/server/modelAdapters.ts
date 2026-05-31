@@ -20,7 +20,7 @@ export class DummyModelAdapter implements ModelAdapter {
         script,
       },
       usage: {
-        inputTokens: approxTokens(JSON.stringify(input.observation)),
+        inputTokens: approxTokens(JSON.stringify(input.observation) + (input.contextDump ?? '')),
         outputTokens: approxTokens(script),
       },
       latencyMs: Date.now() - started,
@@ -57,6 +57,7 @@ export class OpenRouterAdapter implements ModelAdapter {
             content: [
               'Return only JSON for one browser tool call.',
               'Schema: {"mode":"run","script":"const tab = await browser.currentTab(); await tab.snapshot(); ...; return await tab.snapshot();"}',
+              input.contextDump ? `Own prior-turn context dump:\n${input.contextDump}` : 'Own prior-turn context dump: disabled for this match.',
               `Observation:\n${JSON.stringify(input.observation, null, 2)}`,
             ].join('\n\n'),
           },
@@ -75,7 +76,7 @@ export class OpenRouterAdapter implements ModelAdapter {
       rawText,
       browserTool: parseBrowserTool(rawText),
       usage: {
-        inputTokens: data.usage?.prompt_tokens ?? approxTokens(JSON.stringify(input.observation)),
+        inputTokens: data.usage?.prompt_tokens ?? approxTokens(JSON.stringify(input.observation) + (input.contextDump ?? '')),
         outputTokens: data.usage?.completion_tokens ?? approxTokens(rawText),
       },
       latencyMs: Date.now() - started,

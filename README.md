@@ -1,11 +1,11 @@
 # lvl
 
-lvl is a local-first AI agent evaluation arena. The first version should be a simple browser-based app where we can create matches, choose models, run those matches one after another or in parallel, monitor active runs, inspect outputs, and score how well each model plus harness performs.
+lvl is a local-first AI agent evaluation arena. The current product is focused on model-vs-model chess: create a chess match, choose two models, choose whether agents get fresh board state or their own prior-turn context dump, watch the match run, replay the board move by move, and inspect the trace behind the result.
 
 The product is not just a leaderboard. The core value is the full loop:
 
 ```text
-Create match -> Run agents through harness -> Interact with environment -> Record trace -> Score run -> Replay and compare
+Create chess match -> Run agents through harness -> Interact with Chromium board -> Record trace -> Score run -> Replay moves
 ```
 
 ## Product Goal
@@ -22,10 +22,10 @@ The first target is intentionally small:
 - Run locally.
 - Create a match from a web UI.
 - Choose models or dummy agents.
-- Run a simple task.
+- Run a model-vs-model chess task.
 - Watch active matches continue in the background.
-- Open a match replay page.
-- See model outputs, tool actions, browser state, and score events.
+- Open a match replay board.
+- Step through moves with keyboard controls and inspect model outputs, tool actions, and score events.
 
 ## Current Local MVP
 
@@ -40,20 +40,25 @@ The repository currently includes a runnable local MVP:
 - Browser tool contract with `mode: "state"` and `mode: "run"`.
 - Stronger browser parser for fenced JSON, nested tool wrappers, direct scripts, chess square clicks, coordinate clicks, inputs, selects, and key presses.
 - Barebones harness.
-- Real local browser game pages rendered in Chromium.
-- Interactive chess opening task with click-source/click-destination moves.
+- Real local chess page rendered in Chromium.
 - Full model-vs-model chess match task with legal move validation and no CPU opponent.
-- Deterministic popup hurdle.
-- Background match orchestrator with sequential and parallel modes.
+- Illegal move retry path: illegal/incomplete moves are penalized, logged, and the same side gets another turn with updated legal moves.
+- Chess-only match creation UI for the current product focus.
+- Match memory mode: `Fresh state` sends only the current board; `Context dump` sends each agent its own previous observations, outputs, tool calls, actions, and score events.
+- Background match orchestrator. Chess matches run as turn-based sequential matches.
 - Trace recording.
-- Chromium screenshots in replay.
+- Match-centric trace recording.
 - Scorecard generation.
 - Elo ratings for model head-to-head results.
-- Match replay UI.
-- Live replay frame that updates while the selected match is running.
+- Match replay modal with all actions, Agent A only, or Agent B only filters.
+- Replay board page for chess matches with Start, Prev, Play, Next, Latest, slider, and arrow-key navigation.
+- Replay board keeps polling while a match is still running.
+- Full-width match table with match name, winner, competing models, start time, duration, and stored seed details.
+- Clicking a match opens its full trace/log modal.
 - Previous match list for reopening older run traces.
 - Multi-seed suite creation from the match form.
 - Multi-seed suite smoke script.
+- Fixed/random seed mode. Random seeds are generated at launch, stored on each match, and shown in the match log so they can be rerun later.
 - Rich analytics: score distribution, task success, model Elo, failure labels, cost, latency.
 - Smoke test script.
 - Benchmark batch script for local/OpenRouter matchups.
@@ -95,14 +100,12 @@ Default benchmark batch:
 
 Additional configured OpenRouter models can be selected from the UI, but provider rate limits may affect long batches.
 
-Current browser tasks:
+Current browser tasks and UI scope:
 
-- `target-grid-duel`: click highlighted tiles and avoid traps.
-- `chess-opening-e4`: play `1. e4` by clicking `e2` then `e4` on a full chess board.
+- The web UI currently exposes only `chess-full-match`.
 - `chess-full-match`: model-vs-model chess game; Agent A is White, Agent B is Black, legal moves are validated by `chess.js`, and thinking time is recorded but not used to flag.
 - Illegal chess moves do not immediately end the game. The same agent gets redirected with updated legal moves and can retry until the match reaches checkmate, draw, or move cap.
-- `simple-checkout-popup`: add item to cart, handle popup, confirm checkout.
-- `confirm-button-decoy`: click the real confirmation target.
+- Older browser task definitions (`target-grid-duel`, `chess-opening-e4`, `simple-checkout-popup`, `confirm-button-decoy`) still exist in seed data/scripts for development, but are hidden from the main match form for now.
 
 Local data and traces are intentionally ignored by git:
 
@@ -164,30 +167,21 @@ It should support:
 
 - Creating a new match.
 - Choosing models or dummy agents.
-- Choosing a task or environment.
-- Choosing whether to run immediately or queue.
+- Running the current chess match environment.
+- Choosing memory mode: fresh current-state prompt or own-turn context dump.
 - Monitoring active matches.
 - Starting another match while previous matches keep running.
 - Opening completed matches.
-- Viewing traces, outputs, screenshots, scorecards, and graphs.
+- Viewing traces, outputs, board replay, scorecards, and graphs.
 
-Initial pages:
+Current pages/routes:
 
-- `/` - dashboard with active and recent matches.
-- `/matches/new` - create match page.
-- `/matches/:id` - match detail and replay.
-- `/tasks` - list of available tasks.
-- `/models` - configured models and dummy agents.
-- `/analytics` - score and cost graphs, added after the basic loop works.
+- `/` - dashboard with hero, chess-only match form, and match table.
+- `/api/matches/:id` - match detail JSON.
+- `/api/matches/:id/replay` - chess replay frames for the board player.
+- `/task-pages/:taskId?seed=818&matchId=<id>` - task/replay board page.
 
-Recommended first stack:
-
-- Next.js for web UI.
-- Tailwind for styling.
-- shadcn/ui for basic components.
-- API routes or a separate API service, depending on how quickly we want worker separation.
-
-For the first version, a single app can host the UI and API. If background workers become awkward, split the worker into a separate package.
+Current stack is Vite + React for the frontend and Express for the API. The app is still intentionally local-first and can be split into workers/packages later.
 
 ### 2. Match Creation
 
@@ -206,21 +200,16 @@ Both runs should receive:
 - Same environment version.
 - Same hurdle or chaos schedule, if enabled.
 
-Example match form fields:
+Current match form fields:
 
 - Match name.
-- Task.
-- Environment type.
 - Agent A model.
-- Agent A harness.
 - Agent B model.
-- Agent B harness.
-- Max steps.
-- Max tool calls.
-- Timeout.
+- Memory mode: `Fresh state` or `Context dump`.
 - Seed.
-- Run mode: sequential or parallel.
-- Hurdles enabled: yes/no.
+- Randomize seeds and seed count.
+
+The form always creates `chess-full-match` right now. It always runs sequentially because chess is turn-based, and hurdles are disabled for the current chess focus.
 
 Match states:
 

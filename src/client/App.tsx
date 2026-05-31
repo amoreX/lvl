@@ -43,7 +43,6 @@ export function App() {
       const [boot, summary] = await Promise.all([api.bootstrap(), api.analytics()]);
       setData(boot);
       setAnalytics(summary);
-      if (!selectedMatchId && boot.matches[0]) setSelectedMatchId(boot.matches[0].id);
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -85,31 +84,36 @@ export function App() {
   return (
     <Shell error={error}>
       <section className="hero">
-        <div>
-          <p className="eyebrow">Local evidence-first agent evals</p>
+        <div className="heroCopy">
+          <div className="heroBrand">
+            <span className="mark">lvl</span>
+            <div>
+              <strong>lvl</strong>
+              <p className="eyebrow">Local evidence-first agent evals</p>
+            </div>
+          </div>
           <h1>Run the match. Watch the trace. Score the proof.</h1>
+          <div className="heroStats">
+            <Metric label="matches" value={analytics?.totals.matches ?? 0} />
+            <Metric label="completed runs" value={analytics?.totals.completedRuns ?? 0} />
+            <Metric label="avg score" value={analytics?.totals.avgScore ?? 0} />
+          </div>
         </div>
-        <div className="heroStats">
-          <Metric label="matches" value={analytics?.totals.matches ?? 0} />
-          <Metric label="completed runs" value={analytics?.totals.completedRuns ?? 0} />
-          <Metric label="avg score" value={analytics?.totals.avgScore ?? 0} />
-        </div>
-      </section>
-
-      <main className="layout">
-        <section className="panel compose">
+        <div className="heroCompose">
           <h2>New Match</h2>
           <MatchForm
             models={data.models}
             harnesses={data.harnesses}
             tasks={data.tasks}
-            onCreated={(match) => {
-              setSelectedMatchId(match.id);
+            onCreated={() => {
+              setSelectedMatchId(null);
               void refresh();
             }}
           />
-        </section>
+        </div>
+      </section>
 
+      <main className="layout">
         <section className="panel matches">
           <div className="panelHead">
             <h2>Matches</h2>
@@ -118,30 +122,22 @@ export function App() {
           <MatchList
             matches={data.matches}
             runs={data.runs}
+            models={data.models}
             selected={selectedMatchId}
             onSelect={setSelectedMatchId}
           />
         </section>
-
-        <section className="panel replay">
-          {detail ? (
-            <MatchReplay
-              detail={detail}
-              onCancel={async () => {
-                await api.cancel(detail.match.id);
-                await refresh();
-              }}
-            />
-          ) : (
-            <EmptyReplay />
-          )}
-        </section>
-
-        <section className="panel analytics">
-          <h2>Analytics</h2>
-          <Analytics analytics={analytics} />
-        </section>
       </main>
+      {detail ? (
+        <MatchModal
+          detail={detail}
+          onClose={() => setSelectedMatchId(null)}
+          onCancel={async () => {
+            await api.cancel(detail.match.id);
+            await refresh();
+          }}
+        />
+      ) : null}
     </Shell>
   );
 }
@@ -149,13 +145,6 @@ export function App() {
 function Shell({ children, error }: { children: React.ReactNode; error?: string | null }) {
   return (
     <div className="shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="mark">lvl</span>
-          <span>lvl</span>
-        </div>
-        <span className="status">local arena</span>
-      </header>
       {error ? <div className="error">{error}</div> : null}
       {children}
     </div>
@@ -173,19 +162,21 @@ function MatchForm({
   tasks: TaskConfig[];
   onCreated: (match: MatchRecord) => void;
 }) {
-  const defaultHarness = harnesses[0]?.id ?? '';
-  const defaultTask = tasks.find((task) => task.id === 'target-grid-duel') ?? tasks[0];
+  const defaultHarness = harnesses[0]?.id ?? 'ghost-barebones';
+  const defaultTask = tasks.find((task) => task.id === 'chess-full-match') ?? tasks[0];
   const [form, setForm] = useState<CreateMatchInput>({
-    name: 'Target grid duel',
+    name: defaultTask?.title ?? 'Chess full match',
     taskId: defaultTask?.id ?? '',
     agentA: { modelId: models[0]?.id ?? '', harnessId: defaultHarness },
     agentB: { modelId: models[1]?.id ?? models[0]?.id ?? '', harnessId: defaultHarness },
     seed: 818,
-    runMode: 'parallel',
-    hurdlesEnabled: true,
+    memoryMode: 'fresh',
+    runMode: 'sequential',
+    hurdlesEnabled: false,
     maxSteps: defaultTask?.maxSteps ?? 10,
     maxToolCalls: defaultTask?.maxToolCalls ?? 30,
   });
+  const [randomizeSeeds, setRandomizeSeeds] = useState(false);
   const [suiteCount, setSuiteCount] = useState(1);
   const [submitting, setSubmitting] = useState(false);
 
@@ -197,10 +188,21 @@ function MatchForm({
       const baseSeed = form.seed ?? Math.floor(Math.random() * 1_000_000);
       let firstMatch: MatchRecord | null = null;
       for (let index = 0; index < count; index += 1) {
+        const seedMode = randomizeSeeds ? 'random' : 'fixed';
+        const seed = randomizeSeeds
+          ? Math.floor(Math.random() * 1_000_000_000)
+          : baseSeed + index;
         const match = await api.createMatch({
           ...form,
-          name: count > 1 ? `${form.name} · seed ${baseSeed + index}` : form.name,
-          seed: baseSeed + index,
+          name: count > 1 ? `${form.name} · ${index + 1}/${count}` : form.name,
+          taskId: defaultTask?.id ?? form.taskId,
+          runMode: 'sequential',
+          hurdlesEnabled: false,
+          seed,
+          seedMode,
+          suiteIndex: count > 1 ? index + 1 : undefined,
+          suiteCount: count > 1 ? count : undefined,
+          memoryMode: form.memoryMode ?? 'fresh',
         });
         firstMatch ??= match;
       }
@@ -216,37 +218,41 @@ function MatchForm({
         Match name
         <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
       </label>
+      <div className="duo">
+        <AgentSelect label="Agent A" models={models} value={form.agentA} onChange={(agentA) => setForm({ ...form, agentA: { ...agentA, harnessId: defaultHarness } })} />
+        <AgentSelect label="Agent B" models={models} value={form.agentB} onChange={(agentB) => setForm({ ...form, agentB: { ...agentB, harnessId: defaultHarness } })} />
+      </div>
       <label>
-        Task
-        <select value={form.taskId} onChange={(event) => setForm({ ...form, taskId: event.target.value })}>
-          {tasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
+        Memory mode
+        <select value={form.memoryMode ?? 'fresh'} onChange={(event) => setForm({ ...form, memoryMode: event.target.value as CreateMatchInput['memoryMode'] })}>
+          <option value="fresh">Fresh state</option>
+          <option value="context_dump">Context dump</option>
         </select>
       </label>
-      <div className="duo">
-        <AgentSelect label="Agent A" models={models} harnesses={harnesses} value={form.agentA} onChange={(agentA) => setForm({ ...form, agentA })} />
-        <AgentSelect label="Agent B" models={models} harnesses={harnesses} value={form.agentB} onChange={(agentB) => setForm({ ...form, agentB })} />
+      <p className="fieldHint">
+        Fresh state sends only the current board. Context dump also sends each agent its own previous turns, raw outputs, tool calls, and score events.
+      </p>
+      <div className={`seedGrid ${randomizeSeeds ? 'random' : ''}`}>
+        <label className="check seedToggle">
+          <input type="checkbox" checked={randomizeSeeds} onChange={(event) => setRandomizeSeeds(event.target.checked)} />
+          Randomize seeds
+        </label>
+        {!randomizeSeeds ? (
+          <label>
+            Seed
+            <input
+              type="number"
+              value={form.seed ?? ''}
+              onChange={(event) => setForm({ ...form, seed: Number(event.target.value) })}
+            />
+          </label>
+        ) : null}
+        <label>
+          {randomizeSeeds ? 'Random matches' : 'Seed count'}
+          <input type="number" min={1} max={randomizeSeeds ? 10 : 25} value={suiteCount} onChange={(event) => setSuiteCount(Math.max(1, Math.min(randomizeSeeds ? 10 : 25, Number(event.target.value))))} />
+        </label>
       </div>
-      <div className="duo compact">
-        <label>
-          Seed
-          <input type="number" value={form.seed ?? ''} onChange={(event) => setForm({ ...form, seed: Number(event.target.value) })} />
-        </label>
-        <label>
-          Seed count
-          <input type="number" min={1} max={25} value={suiteCount} onChange={(event) => setSuiteCount(Number(event.target.value))} />
-        </label>
-        <label>
-          Run mode
-          <select value={form.runMode} onChange={(event) => setForm({ ...form, runMode: event.target.value as CreateMatchInput['runMode'] })}>
-            <option value="parallel">Parallel</option>
-            <option value="sequential">Sequential</option>
-          </select>
-        </label>
-      </div>
-      <label className="check">
-        <input type="checkbox" checked={form.hurdlesEnabled} onChange={(event) => setForm({ ...form, hurdlesEnabled: event.target.checked })} />
-        Enable deterministic hurdles
-      </label>
+      {randomizeSeeds ? <p className="fieldHint">Each match gets a generated seed. The exact seed is saved in the match log for reruns.</p> : null}
       <button disabled={submitting}>{submitting ? 'Launching...' : suiteCount > 1 ? `Create ${suiteCount} Seed Suite` : 'Create and Run Match'}</button>
     </form>
   );
@@ -255,13 +261,11 @@ function MatchForm({
 function AgentSelect({
   label,
   models,
-  harnesses,
   value,
   onChange,
 }: {
   label: string;
   models: ModelConfig[];
-  harnesses: HarnessConfig[];
   value: { modelId: string; harnessId: string };
   onChange: (value: { modelId: string; harnessId: string }) => void;
 }) {
@@ -273,9 +277,6 @@ function AgentSelect({
           <option key={model.id} value={model.id}>{model.name}{model.enabled ? '' : ' (needs key)'}</option>
         ))}
       </select>
-      <select value={value.harnessId} onChange={(event) => onChange({ ...value, harnessId: event.target.value })}>
-        {harnesses.map((harness) => <option key={harness.id} value={harness.id}>{harness.name}</option>)}
-      </select>
     </fieldset>
   );
 }
@@ -283,28 +284,43 @@ function AgentSelect({
 function MatchList({
   matches,
   runs,
+  models,
   selected,
   onSelect,
 }: {
   matches: MatchRecord[];
   runs: RunRecord[];
+  models: ModelConfig[];
   selected: string | null;
   onSelect: (id: string) => void;
 }) {
   if (!matches.length) return <p className="muted">No matches yet. Launch the first match.</p>;
   return (
-    <div className="matchList">
+    <div className="matchTable">
+      <div className="matchTableHead">
+        <span>Match</span>
+        <span>Winner</span>
+        <span>Model 1</span>
+        <span>Model 2</span>
+        <span>Started</span>
+        <span>Duration</span>
+        <span>Seed</span>
+      </div>
       {matches.map((match) => {
         const matchRuns = runs.filter((run) => run.matchId === match.id);
-        const best = Math.max(0, ...matchRuns.map((run) => run.scorecard?.total ?? 0));
+        const agentA = matchRuns.find((run) => run.role === 'agentA');
+        const agentB = matchRuns.find((run) => run.role === 'agentB');
+        const agentAName = shortModelName(models.find((model) => model.id === agentA?.modelId)?.name ?? agentA?.modelId ?? 'Agent A');
+        const agentBName = shortModelName(models.find((model) => model.id === agentB?.modelId)?.name ?? agentB?.modelId ?? 'Agent B');
         return (
-          <button key={match.id} className={`matchRow ${selected === match.id ? 'active' : ''}`} onClick={() => onSelect(match.id)}>
-            <span>
-              <strong>{match.name}</strong>
-              <small>{match.runMode} · seed {match.seed}</small>
-            </span>
-            <span className={`pill ${match.status}`}>{match.status}</span>
-            <span className="score">{best.toFixed(1)}</span>
+          <button key={match.id} className={`matchTableRow ${selected === match.id ? 'active' : ''}`} onClick={() => onSelect(match.id)}>
+            <strong>{displayMatchName(match.name)}</strong>
+            <span>{shortModelName(winnerName(match, matchRuns, models))}</span>
+            <span>{agentAName}</span>
+            <span>{agentBName}</span>
+            <span>{formatDateTime(match.startedAt ?? match.createdAt)}</span>
+            <span>{durationLabel(match)}</span>
+            <span>{shortSeedLabel(match)}</span>
           </button>
         );
       })}
@@ -312,105 +328,152 @@ function MatchList({
   );
 }
 
-function MatchReplay({ detail, onCancel }: { detail: MatchDetail; onCancel: () => Promise<void> }) {
-  const [runId, setRunId] = useState(detail.runs[0]?.id ?? '');
-  const run = useMemo(() => detail.runs.find((item) => item.id === runId) ?? detail.runs[0], [detail, runId]);
+type RunFilter = 'all' | 'agentA' | 'agentB';
 
-  useEffect(() => {
-    if (detail.runs[0] && !detail.runs.some((item) => item.id === runId)) {
-      setRunId(detail.runs[0].id);
-    }
-  }, [detail, runId]);
+function MatchModal({ detail, onClose, onCancel }: { detail: MatchDetail; onClose: () => void; onCancel: () => Promise<void> }) {
+  return (
+    <div className="modalOverlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modalPanel" role="dialog" aria-modal="true" aria-label={`${displayMatchName(detail.match.name)} details`}>
+        <MatchReplay detail={detail} onCancel={onCancel} onClose={onClose} />
+      </div>
+    </div>
+  );
+}
+
+function MatchReplay({ detail, onCancel, onClose }: { detail: MatchDetail; onCancel: () => Promise<void>; onClose: () => void }) {
+  const [filter, setFilter] = useState<RunFilter>('all');
 
   return (
     <div>
       <div className="panelHead">
         <div>
-          <h2>{detail.match.name}</h2>
+          <h2>{displayMatchName(detail.match.name)}</h2>
           <p className="muted">
             {detail.match.status === 'running' ? 'Live replay updating automatically · ' : ''}
-            {detail.task.title} · seed {detail.match.seed} ·{' '}
-            <a href={`/task-pages/${detail.task.id}?seed=${detail.match.seed}`} target="_blank" rel="noreferrer">open game page</a>
+            {detail.task.title} · {memoryLabel(detail.match.memoryMode)} · winner: {shortModelName(winnerName(detail.match, detail.runs, detail.runs.map((run) => run.model).filter(Boolean) as ModelConfig[]))} · {seedLabel(detail.match)} · duration {durationLabel(detail.match)} ·{' '}
+            <a href={`/task-pages/${detail.task.id}?seed=${detail.match.seed}&matchId=${detail.match.id}`} target="_blank" rel="noreferrer">open replay board</a>
           </p>
         </div>
-        {detail.match.status === 'running' || detail.match.status === 'queued'
-          ? <button className="danger" onClick={() => window.confirm('Cancel this match and preserve the partial trace?') && void onCancel()}>Cancel</button>
-          : <span className={`pill ${detail.match.status}`}>{detail.match.status}</span>}
+        <div className="modalActions">
+          {detail.match.status === 'running' || detail.match.status === 'queued'
+            ? <button className="danger" onClick={() => window.confirm('Cancel this match and preserve the partial trace?') && void onCancel()}>Cancel</button>
+            : <span className={`pill ${detail.match.status}`}>{detail.match.status}</span>}
+          <button className="subtle" onClick={onClose}>Close</button>
+        </div>
       </div>
 
-      <div className="runTabs">
-        {detail.runs.map((item) => (
-          <button key={item.id} className={item.id === run?.id ? 'active' : ''} onClick={() => setRunId(item.id)}>
-            {item.role === 'agentA' ? 'Agent A' : 'Agent B'} · {item.model?.name}
-          </button>
-        ))}
+      <div className="runFilter">
+        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All logs</button>
+        <button className={filter === 'agentA' ? 'active' : ''} onClick={() => setFilter('agentA')}>Agent A</button>
+        <button className={filter === 'agentB' ? 'active' : ''} onClick={() => setFilter('agentB')}>Agent B</button>
       </div>
 
-      {run ? <RunTrace run={run} /> : <p className="muted">No run selected.</p>}
+      <MatchLog detail={detail} filter={filter} />
     </div>
   );
 }
 
-function RunTrace({ run }: { run: MatchDetail['runs'][number] }) {
-  const latestStep = run.steps.at(-1);
+function MatchLog({ detail, filter }: { detail: MatchDetail; filter: RunFilter }) {
+  const runs = filter === 'all' ? detail.runs : detail.runs.filter((run) => run.role === filter);
+  const steps = runs
+    .flatMap((run) => run.steps.map((step) => ({ step, run })))
+    .sort((a, b) => a.step.createdAt.localeCompare(b.step.createdAt));
   return (
-    <div className="traceGrid">
-      <aside className="scorecard">
-        <span className={`pill ${run.status}`}>{run.status}</span>
-        <Metric label="score" value={run.scorecard?.total ?? 0} />
-        <Metric label="steps" value={run.stepCount} />
-        <Metric label="tool calls" value={run.toolCallCount} />
-        <Metric label="cost" value={`$${run.costUsd.toFixed(4)}`} />
-        {run.scorecard ? (
-          <div className="breakdown">
-            <Bar label="success" value={run.scorecard.taskSuccess} />
-            <Bar label="efficiency" value={run.scorecard.efficiency} />
-            <Bar label="robustness" value={run.scorecard.robustness} />
-            <Bar label="progress" value={run.scorecard.progress} />
-            <Bar label="tool use" value={run.scorecard.toolUseQuality} />
-          </div>
-        ) : null}
-        {run.failureLabels.length ? <p className="labels">{run.failureLabels.join(', ')}</p> : null}
-      </aside>
-      <div className="timeline">
-        {latestStep ? (
-          <section className="liveFrame">
-            <div className="panelHead">
-              <div>
-                <h3>Live frame</h3>
-                <p className="muted">Latest recorded browser state for this run.</p>
-              </div>
-              <span className="pill">step {latestStep.stepIndex + 1}</span>
+    <div className="matchLog">
+      {steps.length ? steps.map(({ step, run }) => {
+        const actionText = step.toolCall?.actions.map((action) => action.action).join(', ') || 'state';
+        const eventText = step.scoreEvents.map((event) => `${event.delta >= 0 ? '+' : ''}${event.delta} ${event.reason}`).join(' · ');
+        return (
+          <article key={step.id} className="logRow">
+            <div className="logLine">
+              <strong>{run.role === 'agentA' ? 'Agent A' : 'Agent B'}</strong>
+              <span>{shortModelName(run.model?.name ?? run.modelId)}</span>
+              <span>attempt {step.stepIndex + 1}</span>
+              <span>{actionText}</span>
             </div>
-            {latestStep.observation.screenshotDataUrl ? (
-              <img className="screenshot" src={latestStep.observation.screenshotDataUrl} alt={`Latest browser screenshot for ${run.model?.name ?? run.modelId}`} />
-            ) : null}
-          </section>
-        ) : null}
-        {run.steps.length ? run.steps.map((step) => (
-          <article key={step.id} className="step">
-            <header>
-              <strong>Step {step.stepIndex + 1}</strong>
-              <span>{step.toolCall?.actions.map((action) => action.action).join(', ') || 'state'}</span>
-            </header>
-            {step.observation.screenshotDataUrl ? (
-              <img className="screenshot" src={step.observation.screenshotDataUrl} alt={`Browser screenshot for step ${step.stepIndex + 1}`} />
-            ) : null}
-            <pre>{step.observation.elementTree}</pre>
-            <details>
-              <summary>Model output</summary>
-              <code>{step.modelOutput.rawText}</code>
-            </details>
-            {step.scoreEvents.map((event) => (
-              <p key={event.id} className={event.delta >= 0 ? 'event good' : 'event bad'}>
-                {event.delta >= 0 ? '+' : ''}{event.delta} {event.dimension}: {event.reason}
-              </p>
-            ))}
+            <p className="scoreLine">{eventText || 'No score event'}</p>
+            <div className="modelOutputBlock">
+              <span>Model output</span>
+              <ModelOutput text={step.modelOutput.rawText} />
+            </div>
           </article>
-        )) : <p className="muted">Trace will appear as soon as the first step completes.</p>}
-      </div>
+        );
+      }) : <p className="muted">Trace will appear as soon as the first step completes.</p>}
     </div>
   );
+}
+
+function ModelOutput({ text }: { text: string }) {
+  const content = text.trim();
+  if (!content) return <p className="muted">No model output recorded.</p>;
+
+  const wholeJson = prettyJson(content);
+  if (wholeJson) {
+    return (
+      <div className="modelOutput">
+        <CodeBlock language="json" code={wholeJson} />
+      </div>
+    );
+  }
+
+  const parts = content.split(/```(\w+)?\n([\s\S]*?)```/g);
+  return (
+    <div className="modelOutput">
+      {parts.map((part, index) => {
+        if (index % 3 === 1) return null;
+        if (index % 3 === 2) {
+          const language = parts[index - 1] || 'code';
+          return <CodeBlock key={index} language={language} code={formatCode(language, part)} />;
+        }
+        return <TextOutput key={index} text={part} />;
+      })}
+    </div>
+  );
+}
+
+function TextOutput({ text }: { text: string }) {
+  const blocks: React.ReactNode[] = [];
+  let prose: string[] = [];
+
+  function flushProse(key: string) {
+    const content = prose.join('\n').trim();
+    if (content) blocks.push(<p key={key}>{content}</p>);
+    prose = [];
+  }
+
+  text.split('\n').forEach((line, index) => {
+    const formatted = prettyJson(line.trim());
+    if (formatted) {
+      flushProse(`p-${index}`);
+      blocks.push(<CodeBlock key={`code-${index}`} language="json" code={formatted} />);
+      return;
+    }
+    prose.push(line);
+  });
+  flushProse('p-final');
+
+  return <>{blocks}</>;
+}
+
+function CodeBlock({ language, code }: { language: string; code: string }) {
+  return (
+    <pre className="codeBlock">
+      <code data-language={language || 'code'}>{code.trim()}</code>
+    </pre>
+  );
+}
+
+function formatCode(language: string, code: string) {
+  return language.toLowerCase() === 'json' ? prettyJson(code.trim()) ?? code : code;
+}
+
+function prettyJson(value: string) {
+  if (!value.startsWith('{') && !value.startsWith('[')) return null;
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return null;
+  }
 }
 
 function Analytics({ analytics }: { analytics: AnalyticsSummary | null }) {
@@ -485,6 +548,83 @@ function Bar({ label, value, suffix }: { label: string; value: number; suffix?: 
       <b>{suffix ?? value.toFixed(0)}</b>
     </div>
   );
+}
+
+function seedLabel(match: Pick<MatchRecord, 'seed' | 'seedMode' | 'suiteIndex' | 'suiteCount'>) {
+  const mode = match.seedMode === 'random' ? 'random seed' : 'fixed seed';
+  const suite = match.suiteCount && match.suiteCount > 1
+    ? ` · ${match.suiteIndex ?? '?'} of ${match.suiteCount}`
+    : '';
+  return `${mode} ${match.seed}${suite}`;
+}
+
+function shortSeedLabel(match: Pick<MatchRecord, 'seed' | 'seedMode' | 'suiteIndex' | 'suiteCount'>) {
+  const mode = match.seedMode === 'random' ? 'random' : 'fixed';
+  const suite = match.suiteCount && match.suiteCount > 1
+    ? ` ${match.suiteIndex ?? '?'}/${match.suiteCount}`
+    : '';
+  return `${mode} ${match.seed}${suite}`;
+}
+
+function memoryLabel(mode: MatchRecord['memoryMode'] | undefined) {
+  return mode === 'context_dump' ? 'context dump' : 'fresh state';
+}
+
+function winnerName(match: Pick<MatchRecord, 'winnerRunId' | 'status'>, runs: RunRecord[], models: ModelConfig[]) {
+  if (match.status === 'running' || match.status === 'queued') return match.status;
+  if (match.status === 'cancelled' || match.status === 'failed') return match.status;
+  if (!match.winnerRunId) return 'draw / none';
+  const run = runs.find((item) => item.id === match.winnerRunId);
+  return models.find((model) => model.id === run?.modelId)?.name ?? run?.modelId ?? 'unknown';
+}
+
+function shortModelName(value: string) {
+  return value
+    .replace(/^openrouter[-: ]/i, '')
+    .replace(/^anthropic[-: ]/i, '')
+    .replace(/^openai[-: ]/i, '')
+    .replace(/^google[-: ]/i, '')
+    .replace(/^meta[-: ]/i, '')
+    .replace(/\bClaude\s+/gi, '')
+    .replace(/\bAnthropic\s+/gi, '')
+    .replace(/\bOpenRouter\s+/gi, '')
+    .replace(/\bOpenAI\s+/gi, '')
+    .replace(/\bGoogle\s+/gi, '')
+    .replace(/\bDummy Strong\b/gi, 'Strong')
+    .replace(/\bDummy Chaotic\b/gi, 'Chaotic')
+    .replace(/sonnet-(\d)-(\d)/gi, 'Sonnet $1.$2')
+    .replace(/opus-(\d)-(\d)/gi, 'Opus $1.$2')
+    .replace(/gpt-(\d)-(\d)/gi, 'GPT $1.$2')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function displayMatchName(name: string) {
+  const baseName = name.split(':')[0]?.trim() || name;
+  return shortModelName(baseName)
+    .replace(/\bvs\b/gi, 'vs')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function durationLabel(match: Pick<MatchRecord, 'startedAt' | 'endedAt' | 'createdAt'>) {
+  const start = new Date(match.startedAt ?? match.createdAt).getTime();
+  const end = match.endedAt ? new Date(match.endedAt).getTime() : Date.now();
+  const seconds = Math.max(0, Math.round((end - start) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${minutes}m ${rest}s`;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

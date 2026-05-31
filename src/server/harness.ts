@@ -15,10 +15,12 @@ export class BarebonesHarness {
     observation: Observation;
     maxToolCalls: number;
     timeoutMs: number;
+    contextDump?: string;
   }): Promise<ModelOutput> {
     const modelInput: ModelInput = {
       system: this.systemPrompt(),
       observation: input.observation,
+      contextDump: input.contextDump,
       budget: {
         maxTokens: config.modelMaxTokens,
         maxToolCalls: input.maxToolCalls,
@@ -48,6 +50,7 @@ export class BarebonesHarness {
       'For chess tasks, use the displayed legal moves, then click the source square first and destination square second in the same script when possible.',
       'For full chess matches, do not keep trying the opening move after the position changes; always choose from the current legal moves list.',
       'If your previous chess move was illegal, read the updated status/legal moves and retry a legal move for the same side; do not repeat the illegal move.',
+      'When an own-turn context dump is provided, use it as memory of your prior attempts and outputs, but obey the current board/legal moves over stale plans.',
       'Return JSON only: {"mode":"run","script":"..."}',
     ].join('\n');
   }

@@ -4,7 +4,7 @@ This document captures what has been built so far, what is working, what is inte
 
 ## Current State
 
-lvl is now a local-first AI agent evaluation arena. It can create head-to-head matches, run model/harness pairs against browser tasks, record traces, score runs, show replays, and compute simple Elo-style standings.
+lvl is now a local-first AI agent evaluation arena focused on model-vs-model chess. It can create chess matches, run model/harness pairs through an owned Chromium board, record traces, score runs, replay moves on a chess board, and compute simple Elo-style standings.
 
 The app is usable locally:
 
@@ -39,12 +39,23 @@ npm run benchmark:premium
 - Express API server.
 - Local JSON-file storage under `data/`.
 - Match creation UI.
+- The main UI is currently chess-only: no task picker, no run mode picker, no hurdle toggle.
+- New matches always use `chess-full-match`, sequential turn execution, and no hurdles.
+- `Memory mode` selector:
+  - `Fresh state`: sends only the current board/observation.
+  - `Context dump`: sends the active agent its own previous observations, raw model outputs, tool inputs, executed actions, and score events.
 - Match list and active status polling.
-- Match detail/replay page.
-- Live replay frame for the selected run.
+- Full-width match table showing match name, winner, competing models, start time, duration, and stored seed details.
+- Match detail/replay modal opened by clicking a row.
+- Match-level logs with all/Agent A/Agent B filters.
+- Model output formatting for fenced code and raw one-line JSON tool calls.
+- Chess replay board opened from a match modal.
+- Replay board supports Start, Prev, Play, Next, Latest, slider scrubbing, and arrow-key navigation.
+- Replay board polls ongoing matches so the latest move appears during live runs.
 - Seed-count field for launching simple multi-seed suites.
-- Analytics panel.
-- Task page route for viewing browser games directly.
+- Fixed/random seed mode with stored seed metadata for exact reruns.
+- Hero-level stats for matches, completed runs, and average score.
+- Task page route for viewing chess/replay boards directly.
 
 Important routes:
 
@@ -53,17 +64,20 @@ Important routes:
 /api/bootstrap
 /api/matches
 /api/matches/:id
+/api/matches/:id/replay
 /api/analytics
-/task-pages/:taskId?seed=818
+/task-pages/:taskId?seed=818&matchId=<matchId>
 ```
 
 ### Match Runner
 
 - Background match orchestrator.
-- Supports sequential and parallel run modes.
+- Supports sequential and parallel run modes internally, but the current chess UI always creates sequential matches.
 - Runs two agents per match.
 - Supports match cancellation.
 - Supports launching the same matchup across multiple consecutive seeds from the UI.
+- Random seed launches store the generated seed, suite index, and suite count on the match record.
+- Stores match memory mode and defaults older matches to `fresh`.
 - Preserves partial traces for failed/cancelled runs.
 - Stores match/run state transitions.
 
@@ -83,11 +97,12 @@ cancelled
 ### Harness And Models
 
 - Barebones shared harness.
+- Harness can receive an optional own-turn context dump for pressure-testing models with long context.
 - Dummy agents:
   - `Dummy Strong`
   - `Dummy Chaotic`
 - OpenRouter adapter.
-- OpenRouter key is copied into ignored `.env.local`.
+- OpenRouter key belongs in ignored `.env.local`.
 - Named OpenRouter model configs:
   - GPT-4o Mini
   - Gemini Flash
@@ -110,6 +125,7 @@ The parser now tolerates common model-output messiness:
 - JSON in markdown code fences.
 - Nested `tool` / `arguments` / `input` wrapper objects.
 - Direct browser scripts when the model ignores the JSON-only instruction.
+- One-line JSON tool calls in replay are pretty-printed as code blocks.
 
 ### Browser Runtime
 
@@ -123,7 +139,7 @@ agent harness
   -> Playwright-backed browser runtime
   -> isolated Chromium context
   -> local task page
-  -> indexed DOM actions and screenshots
+  -> indexed DOM actions and optional screenshots
 ```
 
 Implemented browser actions:
@@ -135,7 +151,7 @@ Implemented browser actions:
 - Input by indexed ref.
 - Select/dropdown parsing.
 - Keyboard press.
-- Screenshot capture.
+- Screenshot capture still exists in traces, but normal replay UI hides screenshots and element-tree dumps by default to keep logs focused on model actions.
 - Popup interception as scored obstacle behavior.
 
 The browser context is isolated per run and closed after the run completes.
@@ -143,6 +159,8 @@ The browser context is isolated per run and closed after the run completes.
 ### Browser Tasks
 
 Current tasks:
+
+The main UI currently exposes only `chess-full-match`. Other seeded browser tasks remain useful for scripts/regression work but are hidden from the match form for now.
 
 - `target-grid-duel`
   - Real local browser game rendered in Chromium.
@@ -176,7 +194,7 @@ Current tasks:
 Task pages can be opened directly:
 
 ```text
-http://localhost:5173/task-pages/target-grid-duel?seed=818
+http://localhost:5173/task-pages/chess-full-match?seed=818&matchId=<matchId>
 ```
 
 ### Traces And Replay
@@ -187,22 +205,20 @@ Each run records:
 - Raw model output.
 - Parsed browser tool call.
 - Browser actions.
-- Chromium screenshot.
+- Chromium screenshot, stored but hidden in the standard replay log.
 - Score events.
 - Failure labels.
 - Final scorecard.
 
 The replay UI shows:
 
-- A live frame with the latest screenshot/state for the selected run.
-- Per-run scorecard.
-- Browser screenshots.
-- Element tree.
-- Model output.
-- Score event deltas.
-- Failure labels.
+- Compact per-step action rows.
+- Agent/model, attempt, action type, score/result line, and formatted model output.
+- Filters for all actions, Agent A only, or Agent B only.
+- No element-tree dump or screenshot banner in the normal trace view.
+- Chess board replay with move controls and live polling.
 
-Replay is not currently designed as a side-by-side comparison view. The intended workflow is: watch the selected match update live, create/switch to other matches while runs continue, and reopen previous matches from the list.
+Replay is not designed as a side-by-side comparison view. The intended workflow is: create a chess match, watch the row update while it runs, click the row for trace logs, and open the replay board to scrub through moves like a chess.com-style game replay.
 
 ### Scoring
 
