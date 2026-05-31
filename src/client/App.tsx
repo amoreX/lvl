@@ -186,14 +186,25 @@ function MatchForm({
     maxSteps: defaultTask?.maxSteps ?? 10,
     maxToolCalls: defaultTask?.maxToolCalls ?? 30,
   });
+  const [suiteCount, setSuiteCount] = useState(1);
   const [submitting, setSubmitting] = useState(false);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setSubmitting(true);
     try {
-      const match = await api.createMatch(form);
-      onCreated(match);
+      const count = Math.max(1, Math.min(25, suiteCount));
+      const baseSeed = form.seed ?? Math.floor(Math.random() * 1_000_000);
+      let firstMatch: MatchRecord | null = null;
+      for (let index = 0; index < count; index += 1) {
+        const match = await api.createMatch({
+          ...form,
+          name: count > 1 ? `${form.name} · seed ${baseSeed + index}` : form.name,
+          seed: baseSeed + index,
+        });
+        firstMatch ??= match;
+      }
+      if (firstMatch) onCreated(firstMatch);
     } finally {
       setSubmitting(false);
     }
@@ -221,6 +232,10 @@ function MatchForm({
           <input type="number" value={form.seed ?? ''} onChange={(event) => setForm({ ...form, seed: Number(event.target.value) })} />
         </label>
         <label>
+          Seed count
+          <input type="number" min={1} max={25} value={suiteCount} onChange={(event) => setSuiteCount(Number(event.target.value))} />
+        </label>
+        <label>
           Run mode
           <select value={form.runMode} onChange={(event) => setForm({ ...form, runMode: event.target.value as CreateMatchInput['runMode'] })}>
             <option value="parallel">Parallel</option>
@@ -232,7 +247,7 @@ function MatchForm({
         <input type="checkbox" checked={form.hurdlesEnabled} onChange={(event) => setForm({ ...form, hurdlesEnabled: event.target.checked })} />
         Enable deterministic hurdles
       </label>
-      <button disabled={submitting}>{submitting ? 'Launching...' : 'Create and Run Match'}</button>
+      <button disabled={submitting}>{submitting ? 'Launching...' : suiteCount > 1 ? `Create ${suiteCount} Seed Suite` : 'Create and Run Match'}</button>
     </form>
   );
 }
@@ -313,6 +328,7 @@ function MatchReplay({ detail, onCancel }: { detail: MatchDetail; onCancel: () =
         <div>
           <h2>{detail.match.name}</h2>
           <p className="muted">
+            {detail.match.status === 'running' ? 'Live replay updating automatically · ' : ''}
             {detail.task.title} · seed {detail.match.seed} ·{' '}
             <a href={`/task-pages/${detail.task.id}?seed=${detail.match.seed}`} target="_blank" rel="noreferrer">open game page</a>
           </p>
@@ -336,6 +352,7 @@ function MatchReplay({ detail, onCancel }: { detail: MatchDetail; onCancel: () =
 }
 
 function RunTrace({ run }: { run: MatchDetail['runs'][number] }) {
+  const latestStep = run.steps.at(-1);
   return (
     <div className="traceGrid">
       <aside className="scorecard">
@@ -356,6 +373,20 @@ function RunTrace({ run }: { run: MatchDetail['runs'][number] }) {
         {run.failureLabels.length ? <p className="labels">{run.failureLabels.join(', ')}</p> : null}
       </aside>
       <div className="timeline">
+        {latestStep ? (
+          <section className="liveFrame">
+            <div className="panelHead">
+              <div>
+                <h3>Live frame</h3>
+                <p className="muted">Latest recorded browser state for this run.</p>
+              </div>
+              <span className="pill">step {latestStep.stepIndex + 1}</span>
+            </div>
+            {latestStep.observation.screenshotDataUrl ? (
+              <img className="screenshot" src={latestStep.observation.screenshotDataUrl} alt={`Latest browser screenshot for ${run.model?.name ?? run.modelId}`} />
+            ) : null}
+          </section>
+        ) : null}
         {run.steps.length ? run.steps.map((step) => (
           <article key={step.id} className="step">
             <header>

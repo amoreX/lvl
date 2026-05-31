@@ -37,6 +37,9 @@ src/client/                  React UI
 src/server/                  API, orchestrator, scoring, browser runtime
 src/shared/types.ts          Shared protocol and data types
 scripts/smoke-test.ts        Fast local end-to-end test
+scripts/test-browser-parser.ts  Parser-only regression checks
+scripts/run-chess-verify.ts  Cheap real-model chess verification
+scripts/run-multiseed-suite.ts  Multi-seed suite smoke check
 scripts/run-benchmark.ts     Standard benchmark batch
 scripts/run-premium-benchmark.ts  Premium model benchmark batch
 README.md                    Product/build overview
@@ -68,12 +71,16 @@ Checks:
 ```bash
 npm run typecheck
 npm run build
+npm run parser:test
 npm run smoke
+npm run chess:verify
+npm run suite:smoke
 ```
 
 Benchmarks:
 
 ```bash
+npm run suite:smoke
 npm run benchmark
 npm run benchmark:premium
 ```
@@ -190,8 +197,9 @@ It:
 - Builds model input.
 - Sends observation to model adapter.
 - Normalizes a browser tool call.
+- Uses the shared browser action parser for messy model responses.
 
-It is intentionally simple. Future harness improvements should remain versioned and measurable.
+It is intentionally simple, but now handles common model-output messiness such as JSON inside prose, fenced JSON, nested `arguments` objects, and script-only responses. Future harness improvements should remain versioned and measurable.
 
 Do not make the orchestrator depend on one harness implementation forever.
 
@@ -228,6 +236,7 @@ Browser runtime:
 
 ```text
 src/server/chromiumEnvironment.ts
+src/server/browserActionParser.ts
 ```
 
 The project owns its browser runtime through Playwright/Chromium. Do not reintroduce Ghost browser extension coupling.
@@ -246,7 +255,10 @@ Current browser actions:
 
 - Snapshot/state.
 - Click indexed element.
+- Click chess squares by name, such as `e2` then `e4`.
+- Coordinate click parsing.
 - Input indexed element.
+- Select/dropdown parsing.
 - Keyboard press.
 - Screenshot.
 
@@ -264,9 +276,18 @@ Planned actions:
 When extending browser actions:
 
 1. Update `BrowserToolInput` if the tool contract changes.
-2. Update script extraction/execution in `chromiumEnvironment.ts`.
-3. Add score event behavior if action affects scoring.
-4. Run `npm run smoke`.
+2. Update script extraction in `src/server/browserActionParser.ts`.
+3. Update execution in `chromiumEnvironment.ts`.
+4. Add score event behavior if action affects scoring.
+5. Run `npm run parser:test` and `npm run smoke`.
+
+Parser expectations:
+
+- Accept JSON embedded in prose.
+- Accept JSON in markdown code fences.
+- Accept nested shapes like `{ "tool": "browser", "arguments": { ... } }`.
+- Accept direct browser scripts when a model ignores the JSON-only instruction.
+- Prefer parser expansion over adding brittle one-off regexes in the environment runner.
 
 ### Tasks
 
@@ -285,8 +306,25 @@ renderTaskPage()` in `src/server/chromiumEnvironment.ts`
 Current tasks:
 
 - `target-grid-duel`
+- `chess-opening-e4`
 - `simple-checkout-popup`
 - `confirm-button-decoy`
+
+Chess task notes:
+
+- The current chess task verifies one move, not a full game.
+- It renders a full board in Chromium.
+- Agents must click source square `e2`, then destination square `e4`.
+- Square buttons use `data-lvl-ref` and labels like `White pawn on e2` / `Empty square e4`.
+- No hurdles should be enabled for chess verification runs unless explicitly requested.
+
+Replay behavior:
+
+- The selected match detail polls and updates while a match is running.
+- The run view shows a live frame with the latest browser screenshot/state.
+- Users can create new matches while previous matches continue running.
+- Users can reopen previous matches from the match list.
+- Do not prioritize side-by-side comparison unless explicitly requested; replay means live/current inspection plus historical trace browsing.
 
 Task design rules:
 
@@ -408,8 +446,8 @@ Remember: these are local early-platform results, not public benchmark claims.
 1. Improve model output parsing and repair.
 2. Add more Playwright browser actions.
 3. Add more real browser tasks.
-4. Add multi-seed benchmark suites.
-5. Add side-by-side run comparison.
+4. Expand multi-seed benchmark suite summaries beyond the current seed-count launcher and smoke script.
+5. Improve live replay/streaming for longer runs beyond polling.
 6. Move storage from JSON to SQLite/Postgres.
 7. Add golden trace tests.
 8. Tune scoring from inspected traces.

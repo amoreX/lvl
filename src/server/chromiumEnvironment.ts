@@ -8,6 +8,7 @@ import type {
   TaskConfig,
   ToolCallRecord,
 } from '../shared/types.js';
+import { parseBrowserScript } from './browserActionParser.js';
 import { config } from './config.js';
 
 type BrowserGameState = {
@@ -22,6 +23,8 @@ type BrowserGameState = {
   toolFailures: number;
   clickedRefs: number[];
   events: Array<{ type: string; ref?: number; message: string; delta?: number }>;
+  selectedSquare?: string | null;
+  chessMove?: string | null;
 };
 
 export class ChromiumGameEnvironment {
@@ -73,11 +76,14 @@ export class ChromiumGameEnvironment {
         actions.push({ action: 'get_content', successful: true, tab_id: 'chromium' });
       } else {
         const maxActions = Math.min(Math.max(input.max_actions || config.browserMaxActionsPerCall, 1), config.browserMaxActionsPerCall);
-        const refs = extractClickRefs(input.script).slice(0, maxActions);
-        const keyInputs = extractKeys(input.script).slice(0, maxActions);
-        const inputs = extractTextInputs(input.script).slice(0, maxActions);
+        const parsed = parseBrowserScript(input.script);
+        const refs = parsed.clicks.slice(0, maxActions);
+        const keyInputs = parsed.keys.slice(0, maxActions);
+        const inputs = parsed.inputs.slice(0, maxActions);
+        const selects = parsed.selects.slice(0, maxActions);
+        const coordinateClicks = parsed.coordinateClicks.slice(0, maxActions);
 
-        if (!refs.length && !keyInputs.length && !inputs.length && /snapshot|currentTab|tabs/.test(input.script)) {
+        if (!refs.length && !keyInputs.length && !inputs.length && !selects.length && !coordinateClicks.length && parsed.snapshots > 0) {
           actions.push({ action: 'get_content', successful: true, tab_id: 'chromium' });
         }
 
@@ -85,9 +91,19 @@ export class ChromiumGameEnvironment {
           await page.locator(`[data-lvl-ref="${inputAction.ref}"]`).fill(inputAction.text);
           actions.push({ action: 'input', tab_id: 'chromium', successful: true });
         }
+        for (const selectAction of selects) {
+          await page.locator(`[data-lvl-ref="${selectAction.ref}"]`).selectOption({ label: selectAction.text }).catch(async () => {
+            await page.locator(`[data-lvl-ref="${selectAction.ref}"]`).selectOption(selectAction.text);
+          });
+          actions.push({ action: 'select_dropdown', tab_id: 'chromium', successful: true });
+        }
         for (const keys of keyInputs) {
           await page.keyboard.press(keys);
           actions.push({ action: 'send_keys', tab_id: 'chromium', successful: true });
+        }
+        for (const click of coordinateClicks) {
+          await page.mouse.click(click.x, click.y);
+          actions.push({ action: 'click_at', tab_id: 'chromium', successful: true });
         }
         for (const ref of refs) {
           const blockedByPopup = await page.evaluate((targetRef) => {
@@ -176,10 +192,13 @@ export class ChromiumGameEnvironment {
     return events.map((event) => {
       if (event.type === 'target_hit') return scoreEvent(runId, stepIndex, 'progress', 22, event.message);
       if (event.type === 'game_won') return scoreEvent(runId, stepIndex, 'task_success', 100, event.message);
+      if (event.type === 'chess_move_success') return scoreEvent(runId, stepIndex, 'task_success', 100, event.message);
+      if (event.type === 'chess_selected') return scoreEvent(runId, stepIndex, 'progress', 5, event.message);
       if (event.type === 'checkout_confirmed') return scoreEvent(runId, stepIndex, 'task_success', 100, event.message);
       if (event.type === 'cart_added') return scoreEvent(runId, stepIndex, 'progress', 20, event.message);
       if (event.type === 'popup_closed') return scoreEvent(runId, stepIndex, 'robustness', 12, event.message);
       if (event.type === 'blocked_by_popup') return scoreEvent(runId, stepIndex, 'robustness', -12, event.message);
+      if (event.type === 'chess_illegal') return scoreEvent(runId, stepIndex, 'toolUseQuality', -18, event.message);
       if (event.type === 'decoy_clicked') return scoreEvent(runId, stepIndex, 'toolUseQuality', -16, event.message);
       return scoreEvent(runId, stepIndex, 'toolUseQuality', -8, event.message);
     });
@@ -193,6 +212,8 @@ export class ChromiumGameEnvironment {
 
 export function renderTaskPage(task: TaskConfig, seed: number) {
   const targetScore = task.objective.targetScore ?? 3;
+  const objective = task.objective.kind;
+  const targetMove = task.objective.targetMove ?? 'e2e4';
   return `<!doctype html>
 <html>
 <head>
@@ -220,6 +241,15 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
     .popup[data-open="true"] { display: grid; }
     .modal { width: min(420px, 100%); background: white; border-radius: 22px; border: 1px solid #cbd5e1; padding: 22px; box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24); }
     .result { margin-top: 18px; padding: 14px; border-radius: 16px; background: #ecfdf5; color: #065f46; font-weight: 800; }
+    .chess-wrap { display: grid; grid-template-columns: minmax(320px, 520px) minmax(220px, 1fr); gap: 20px; align-items: start; margin-top: 20px; }
+    .board { display: grid; grid-template-columns: repeat(8, 1fr); border: 2px solid #334155; border-radius: 18px; overflow: hidden; aspect-ratio: 1; }
+    .square { min-height: 44px; border: 0; border-radius: 0; font-size: clamp(24px, 5vw, 48px); display: grid; place-items: center; position: relative; }
+    .light { background: #f1e3c4; }
+    .dark { background: #8b5e34; color: #fff7ed; }
+    .selected { outline: 4px solid #2563eb; outline-offset: -4px; }
+    .target-square { box-shadow: inset 0 0 0 4px #16a34a; }
+    .coord { position: absolute; left: 6px; bottom: 4px; font-size: 11px; font-weight: 800; opacity: 0.78; }
+    .notation { border: 1px solid #cbd5e1; border-radius: 16px; padding: 14px; background: #f8fafc; }
   </style>
 </head>
 <body>
@@ -230,7 +260,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       <span class="chip" id="score-chip">Score: 0/${targetScore}</span>
       <span class="chip" id="status-chip">Status: running</span>
     </div>
-    ${task.objective.kind === 'target_game' ? renderTargetGame(targetScore) : renderCheckout()}
+    ${objective === 'target_game' ? renderTargetGame(targetScore) : objective === 'chess_move' ? renderChess(targetMove) : renderCheckout()}
     <div id="result" class="result" hidden>Objective complete.</div>
   </main>
   <div id="popup" class="popup" data-open="false">
@@ -245,7 +275,14 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
     const refs = [11, 12, 13, 14, 15, 16, 17, 18, 19];
     const seed = ${JSON.stringify(seed)};
     const targetScore = ${JSON.stringify(targetScore)};
-    const objective = ${JSON.stringify(task.objective.kind)};
+    const objective = ${JSON.stringify(objective)};
+    const targetMove = ${JSON.stringify(targetMove)};
+    const initialBoard = {
+      a1: '♖', b1: '♘', c1: '♗', d1: '♕', e1: '♔', f1: '♗', g1: '♘', h1: '♖',
+      a2: '♙', b2: '♙', c2: '♙', d2: '♙', e2: '♙', f2: '♙', g2: '♙', h2: '♙',
+      a7: '♟', b7: '♟', c7: '♟', d7: '♟', e7: '♟', f7: '♟', g7: '♟', h7: '♟',
+      a8: '♜', b8: '♞', c8: '♝', d8: '♛', e8: '♚', f8: '♝', g8: '♞', h8: '♜'
+    };
     const state = {
       popupOpen: false,
       cart: false,
@@ -253,6 +290,9 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       score: 0,
       targetScore,
       targetRef: refs[Math.abs(seed) % refs.length],
+      board: JSON.parse(JSON.stringify(initialBoard)),
+      selectedSquare: null,
+      chessMove: null,
       wrongClicks: 0,
       decoyClicked: false,
       toolFailures: 0,
@@ -278,6 +318,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
         confirm.classList.toggle('disabled', !state.cart);
         confirm.dataset.label = state.cart ? 'Confirm Checkout' : 'Confirm Checkout disabled';
       }
+      renderChessBoard();
     }
     function moveTarget() {
       const current = refs.indexOf(state.targetRef);
@@ -303,6 +344,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       confirm(ref) { if (guardPopup(ref)) return; state.clickedRefs.push(ref); if (state.cart) { state.confirmed = true; event('checkout_confirmed', 'Checkout confirmed.', ref); } else { state.wrongClicks++; event('wrong_click', 'Tried to confirm before cart was ready.', ref); } render(); },
       decoy(ref) { state.decoyClicked = true; state.wrongClicks++; state.clickedRefs.push(ref); event('decoy_clicked', 'Clicked a decoy target.', ref); render(); },
       tile(ref) { if (guardPopup(ref)) return; state.clickedRefs.push(ref); if (ref === state.targetRef) { state.score++; event('target_hit', 'Clicked the highlighted target tile.', ref); if (state.score >= targetScore) { state.confirmed = true; event('game_won', 'Reached the target score.', ref); } moveTarget(); } else { state.wrongClicks++; state.decoyClicked = true; event('decoy_clicked', 'Clicked a trap tile instead of the target.', ref); render(); } },
+      chessSquare(square, ref) { chessSquare(square, ref); },
       snapshot() {
         const nodes = Array.from(document.querySelectorAll('[data-lvl-ref]')).filter((node) => {
           const el = node;
@@ -320,6 +362,71 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       },
       flushEvents() { const out = state.events.slice(); state.events = []; return out; }
     };
+    function renderChessBoard() {
+      if (objective !== 'chess_move') return;
+      for (const btn of document.querySelectorAll('[data-square]')) {
+        const square = btn.dataset.square;
+        const piece = state.board[square] || '';
+        btn.textContent = piece;
+        btn.classList.toggle('selected', state.selectedSquare === square);
+        btn.classList.toggle('target-square', targetMove.slice(2) === square);
+        const squareName = square;
+        const pieceName = pieceNameFor(piece);
+        const targetHint = squareName === targetMove.slice(0, 2)
+          ? ' Source square for target move ' + targetMove + '.'
+          : squareName === targetMove.slice(2)
+            ? ' Destination square for target move ' + targetMove + '.'
+            : '';
+        btn.dataset.label = (piece ? pieceName + ' on ' + squareName : 'Empty square ' + squareName) + '.' + targetHint;
+      }
+      const selected = document.getElementById('selected-square');
+      const played = document.getElementById('played-move');
+      if (selected) selected.textContent = state.selectedSquare || 'none';
+      if (played) played.textContent = state.chessMove || 'none';
+    }
+    function chessSquare(square, ref) {
+      if (state.confirmed) return;
+      state.clickedRefs.push(ref);
+      const piece = state.board[square];
+      if (!state.selectedSquare) {
+        if (piece && isWhitePiece(piece)) {
+          state.selectedSquare = square;
+          event('chess_selected', 'Selected ' + pieceNameFor(piece) + ' on ' + square + '.', ref);
+        } else {
+          state.wrongClicks++;
+          event('chess_illegal', 'Tried to select ' + square + ', but it has no white piece.', ref);
+        }
+        render();
+        return;
+      }
+      const move = state.selectedSquare + square;
+      if (move === targetMove && isLegalOpeningMove(state.selectedSquare, square)) {
+        state.board[square] = state.board[state.selectedSquare];
+        delete state.board[state.selectedSquare];
+        state.chessMove = move;
+        state.selectedSquare = null;
+        state.confirmed = true;
+        event('chess_move_success', 'Played the requested chess move ' + move + '.', ref);
+        render();
+        return;
+      }
+      state.wrongClicks++;
+      event('chess_illegal', 'Illegal or incorrect chess move ' + move + '; expected ' + targetMove + '.', ref);
+      state.selectedSquare = piece && isWhitePiece(piece) ? square : null;
+      render();
+    }
+    function isLegalOpeningMove(from, to) {
+      return from === 'e2' && to === 'e4' && state.board.e2 === '♙' && !state.board.e3 && !state.board.e4;
+    }
+    function isWhitePiece(piece) {
+      return ['♙','♖','♘','♗','♕','♔'].includes(piece);
+    }
+    function pieceNameFor(piece) {
+      return ({
+        '♙': 'White pawn', '♖': 'White rook', '♘': 'White knight', '♗': 'White bishop', '♕': 'White queen', '♔': 'White king',
+        '♟': 'Black pawn', '♜': 'Black rook', '♞': 'Black knight', '♝': 'Black bishop', '♛': 'Black queen', '♚': 'Black king'
+      })[piece] || 'Empty square';
+    }
     render();
   </script>
 </body>
@@ -340,24 +447,30 @@ function renderCheckout() {
   </div>`;
 }
 
-function extractClickRefs(script: string): number[] {
-  const refs: number[] = [];
-  for (const match of script.matchAll(/\.click(?:AndSnapshot)?\(\s*(\d+)/g)) refs.push(Number(match[1]));
-  return refs;
+function renderChess(targetMove: string) {
+  const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
+  const squares = ranks.flatMap((rank) => files.map((file, fileIndex) => {
+    const square = `${file}${rank}`;
+    const ref = chessRef(square);
+    const color = (rank + fileIndex) % 2 === 0 ? 'dark' : 'light';
+    return `<button class="square ${color}" data-lvl-ref="${ref}" data-square="${square}" data-label="Square ${square}" onclick="window.__lvl.chessSquare('${square}', ${ref})"><span class="coord">${square}</span></button>`;
+  })).join('');
+  return `<div class="chess-wrap">
+    <div class="board" aria-label="Chess board">${squares}</div>
+    <div class="notation">
+      <strong>Chess objective</strong>
+      <p>Play <code>${escapeHtml(targetMove)}</code>: click the piece square first, then the destination square.</p>
+      <p>Selected square: <code id="selected-square">none</code></p>
+      <p>Played move: <code id="played-move">none</code></p>
+    </div>
+  </div>`;
 }
 
-function extractKeys(script: string): string[] {
-  const keys: string[] = [];
-  for (const match of script.matchAll(/\.keys\(\s*["']([^"']+)["']/g)) keys.push(match[1]);
-  return keys;
-}
-
-function extractTextInputs(script: string): Array<{ ref: number; text: string }> {
-  const inputs: Array<{ ref: number; text: string }> = [];
-  for (const match of script.matchAll(/\.(?:input|safeInput)\(\s*(\d+)\s*,\s*["']([^"']*)["']/g)) {
-    inputs.push({ ref: Number(match[1]), text: match[2] });
-  }
-  return inputs;
+function chessRef(square: string) {
+  const file = square.charCodeAt(0) - 96;
+  const rank = Number(square[1]);
+  return 200 + ((rank - 1) * 8) + file;
 }
 
 function scoreEvent(
@@ -391,6 +504,7 @@ declare global {
       confirm(ref: number): void;
       decoy(ref: number): void;
       tile(ref: number): void;
+      chessSquare(square: string, ref: number): void;
       snapshot(): {
         title: string;
         text: string;

@@ -22,8 +22,11 @@ http://localhost:5173
 Useful checks:
 
 ```bash
+npm run parser:test
 npm run build
 npm run smoke
+npm run chess:verify
+npm run suite:smoke
 npm run benchmark
 npm run benchmark:premium
 ```
@@ -38,6 +41,8 @@ npm run benchmark:premium
 - Match creation UI.
 - Match list and active status polling.
 - Match detail/replay page.
+- Live replay frame for the selected run.
+- Seed-count field for launching simple multi-seed suites.
 - Analytics panel.
 - Task page route for viewing browser games directly.
 
@@ -58,6 +63,7 @@ Important routes:
 - Supports sequential and parallel run modes.
 - Runs two agents per match.
 - Supports match cancellation.
+- Supports launching the same matchup across multiple consecutive seeds from the UI.
 - Preserves partial traces for failed/cancelled runs.
 - Stores match/run state transitions.
 
@@ -98,6 +104,13 @@ The model adapter normalizes provider output into a browser tool call:
 { mode: "run", script: "const tab = await browser.currentTab(); await tab.click(11);" }
 ```
 
+The parser now tolerates common model-output messiness:
+
+- JSON embedded in prose.
+- JSON in markdown code fences.
+- Nested `tool` / `arguments` / `input` wrapper objects.
+- Direct browser scripts when the model ignores the JSON-only instruction.
+
 ### Browser Runtime
 
 The project no longer depends on the Ghost browser extension.
@@ -117,7 +130,10 @@ Implemented browser actions:
 
 - State/snapshot.
 - Click by indexed ref.
+- Click chess squares by name, such as `e2` and `e4`.
+- Coordinate click parsing.
 - Input by indexed ref.
+- Select/dropdown parsing.
 - Keyboard press.
 - Screenshot capture.
 - Popup interception as scored obstacle behavior.
@@ -133,6 +149,12 @@ Current tasks:
   - Agents click highlighted target tiles.
   - Trap tiles penalize tool quality.
   - Popup and moving-target hurdles can be injected.
+
+- `chess-opening-e4`
+  - Real local browser chess board rendered in Chromium.
+  - Agents click the source square `e2`, then the destination square `e4`.
+  - No hurdles are enabled for this task.
+  - Current objective verifies one opening move instead of playing a full game.
 
 - `simple-checkout-popup`
   - Local checkout flow.
@@ -162,12 +184,15 @@ Each run records:
 
 The replay UI shows:
 
+- A live frame with the latest screenshot/state for the selected run.
 - Per-run scorecard.
 - Browser screenshots.
 - Element tree.
 - Model output.
 - Score event deltas.
 - Failure labels.
+
+Replay is not currently designed as a side-by-side comparison view. The intended workflow is: watch the selected match update live, create/switch to other matches while runs continue, and reopen previous matches from the list.
 
 ### Scoring
 
@@ -270,8 +295,11 @@ These results reflect the current simple harness, parser, tasks, and scoring for
 These have passed after the latest changes:
 
 ```bash
+npm run parser:test
 npm run build
 npm run smoke
+npm run chess:verify
+npm run suite:smoke
 ```
 
 The premium benchmark also completed successfully:
@@ -378,17 +406,17 @@ Needed next:
 2. Add more real browser actions to the Playwright runtime.
 3. Build 5-10 better browser tasks.
 4. Make scoring per-task instead of one generic formula.
-5. Add multi-seed suite runs.
+5. Expand multi-seed suite runs beyond the current simple runner.
 6. Add trace export/import.
 
 ### Product/UI
 
 1. Add live step streaming instead of polling-only updates.
 2. Add task detail pages.
-3. Add run comparison view side-by-side.
-4. Add leaderboard page.
-5. Add model/harness management UI.
-6. Add failed-run inspection and retry controls.
+3. Add leaderboard page.
+4. Add model/harness management UI.
+5. Add failed-run inspection and retry controls.
+6. Replace polling with streaming once runs get longer.
 
 ### Benchmark Credibility
 
@@ -412,11 +440,10 @@ Needed next:
 
 The next sprint should focus on depth, not breadth:
 
-1. Add a stronger browser action parser.
+1. Keep hardening the browser action parser and repair loop.
 2. Add scroll/select/hover/wait to the Playwright runner.
 3. Create three new browser game tasks.
-4. Add multi-seed suite runner.
-5. Make the replay compare two runs side-by-side.
-6. Tune scoring after inspecting traces.
+4. Expand the multi-seed suite runner with UI summaries.
+5. Tune scoring after inspecting traces.
 
 That would turn the current proof-of-loop into a much more credible local evaluation tool.

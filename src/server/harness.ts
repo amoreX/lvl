@@ -43,8 +43,9 @@ export class BarebonesHarness {
     return [
       'You are running inside lvl.',
       'Use exactly one browser tool call per step.',
-      'The browser tool has mode="state" for inspection and mode="run" for restricted Ghost-style browser scripts.',
+      'The browser tool has mode="state" for inspection and mode="run" for restricted browser scripts.',
       'Prefer tab.snapshot(), indexed tab.click(ref), tab.input(ref, text), and verification after actions.',
+      'For chess tasks, click the source square first and then the destination square in the same script when possible.',
       'Return JSON only: {"mode":"run","script":"..."}',
     ].join('\n');
   }

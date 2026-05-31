@@ -38,8 +38,10 @@ The repository currently includes a runnable local MVP:
 - OpenRouter model adapter path.
 - Owned Playwright/Chromium browser runner.
 - Browser tool contract with `mode: "state"` and `mode: "run"`.
+- Stronger browser parser for fenced JSON, nested tool wrappers, direct scripts, chess square clicks, coordinate clicks, inputs, selects, and key presses.
 - Barebones harness.
 - Real local browser game pages rendered in Chromium.
+- Interactive chess opening task with click-source/click-destination moves.
 - Deterministic popup hurdle.
 - Background match orchestrator with sequential and parallel modes.
 - Trace recording.
@@ -47,6 +49,10 @@ The repository currently includes a runnable local MVP:
 - Scorecard generation.
 - Elo ratings for model head-to-head results.
 - Match replay UI.
+- Live replay frame that updates while the selected match is running.
+- Previous match list for reopening older run traces.
+- Multi-seed suite creation from the match form.
+- Multi-seed suite smoke script.
 - Rich analytics: score distribution, task success, model Elo, failure labels, cost, latency.
 - Smoke test script.
 - Benchmark batch script for local/OpenRouter matchups.
@@ -69,9 +75,14 @@ Useful checks:
 ```bash
 npm run typecheck
 npm run build
+npm run parser:test
 npm run smoke
+npm run chess:verify
+npm run suite:smoke
 npm run benchmark
 ```
+
+`suite:smoke` runs the same dummy matchup across five seeds to verify multi-seed suite execution.
 
 Default benchmark batch:
 
@@ -81,6 +92,13 @@ Default benchmark batch:
 - GPT-4o Mini vs Qwen 3.5 9B on `simple-checkout-popup`.
 
 Additional configured OpenRouter models can be selected from the UI, but provider rate limits may affect long batches.
+
+Current browser tasks:
+
+- `target-grid-duel`: click highlighted tiles and avoid traps.
+- `chess-opening-e4`: play `1. e4` by clicking `e2` then `e4` on a full chess board.
+- `simple-checkout-popup`: add item to cart, handle popup, confirm checkout.
+- `confirm-button-decoy`: click the real confirmation target.
 
 Local data and traces are intentionally ignored by git:
 

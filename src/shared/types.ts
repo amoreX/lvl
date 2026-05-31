@@ -76,8 +76,9 @@ export type TaskConfig = {
   allowedTools: string[];
   hurdles: HurdleConfig[];
   objective: {
-    kind: 'checkout' | 'target_game';
+    kind: 'checkout' | 'target_game' | 'chess_move';
     targetScore?: number;
+    targetMove?: string;
   };
 };
 

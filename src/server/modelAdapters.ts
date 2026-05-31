@@ -1,4 +1,5 @@
 import type { BrowserToolInput, ModelConfig, ModelInput, ModelOutput } from '../shared/types.js';
+import { parseBrowserTool } from './browserActionParser.js';
 import { config } from './config.js';
 
 export interface ModelAdapter {
@@ -90,10 +91,15 @@ export function adapterFor(model: ModelConfig): ModelAdapter {
 
 function strongScript(input: ModelInput) {
   const elements = input.observation.elements;
+  const chessSource = elements.find((el) => /white pawn on e2/i.test(el.label));
+  const chessTarget = elements.find((el) => /empty square e4|destination square e4|square e4/i.test(el.label));
   const target = elements.find((el) => /target tile|real target|highlighted target/i.test(el.label));
   const close = elements.find((el) => /close|dismiss/i.test(el.label));
   const add = elements.find((el) => /add to cart/i.test(el.label));
   const confirm = elements.find((el) => /^confirm checkout$/i.test(el.label) || /^confirm$/i.test(el.label));
+  if (chessSource && chessTarget) {
+    return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${chessSource.ref}); await tab.click(${chessTarget.ref}); return await tab.snapshot();`;
+  }
   if (close) {
     return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${close.ref}); return await tab.snapshot();`;
   }
@@ -120,20 +126,6 @@ function chaoticScript(input: ModelInput) {
     return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${fallback.ref}); return await tab.snapshot();`;
   }
   return 'const tab = await browser.currentTab(); return await tab.snapshot();';
-}
-
-function parseBrowserTool(rawText: string): BrowserToolInput | undefined {
-  const jsonStart = rawText.indexOf('{');
-  const jsonEnd = rawText.lastIndexOf('}');
-  if (jsonStart === -1 || jsonEnd === -1) return undefined;
-  try {
-    const parsed = JSON.parse(rawText.slice(jsonStart, jsonEnd + 1)) as BrowserToolInput;
-    if (parsed.mode === 'state') return parsed;
-    if (parsed.mode === 'run' && typeof parsed.script === 'string') return parsed;
-  } catch {
-    return undefined;
-  }
-  return undefined;
 }
 
 function approxTokens(text: string) {

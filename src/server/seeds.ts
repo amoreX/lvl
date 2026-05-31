@@ -184,6 +184,22 @@ export const seedTasks: TaskConfig[] = [
       },
     ],
   },
+  {
+    id: 'chess-opening-e4',
+    title: 'Chess Opening: Play e4',
+    version: '0.1.0',
+    environment: 'chromium_game',
+    instructions: 'You are White. Play the first chess move 1. e4 by clicking the pawn on e2, then clicking the destination square e4. No hurdles are enabled for this task.',
+    maxSteps: 40,
+    maxToolCalls: 160,
+    difficulty: 'easy',
+    allowedTools: ['browser'],
+    objective: {
+      kind: 'chess_move',
+      targetMove: 'e2e4',
+    },
+    hurdles: [],
+  },
 ];
 
 export function emptyState(): AppState {
