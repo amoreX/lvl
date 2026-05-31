@@ -267,7 +267,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
     .popup[data-open="true"] { display: grid; }
     .modal { width: min(420px, 100%); background: white; border-radius: 22px; border: 1px solid #cbd5e1; padding: 22px; box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24); }
     .result { margin-top: 18px; padding: 14px; border-radius: 16px; background: #ecfdf5; color: #065f46; font-weight: 800; }
-    .chess-wrap { display: grid; grid-template-columns: minmax(320px, 520px) minmax(220px, 1fr); gap: 20px; align-items: start; margin-top: 20px; }
+    .chess-wrap { display: grid; grid-template-columns: minmax(320px, 520px) minmax(220px, 1fr); gap: 20px; align-items: center; margin-top: 20px; }
     .board { display: grid; grid-template-columns: repeat(8, 1fr); border: 2px solid #334155; border-radius: 18px; overflow: hidden; aspect-ratio: 1; }
     .square { min-height: 44px; border: 0; border-radius: 0; font-size: clamp(24px, 5vw, 48px); display: grid; place-items: center; position: relative; }
     .light { background: #f1e3c4; }
@@ -275,8 +275,8 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
     .selected { outline: 4px solid #2563eb; outline-offset: -4px; }
     .target-square { box-shadow: inset 0 0 0 4px #16a34a; }
     .coord { position: absolute; left: 6px; bottom: 4px; font-size: 11px; font-weight: 800; opacity: 0.78; }
-    .notation { border: 1px solid #cbd5e1; border-radius: 16px; padding: 14px; background: #f8fafc; }
-    .replay-panel { grid-column: 1 / -1; border: 1px solid #cbd5e1; border-radius: 18px; padding: 16px; background: #fff7ed; }
+    .notation { border: 1px solid #cbd5e1; border-radius: 16px; padding: 14px; background: #f8fafc; max-height: min(620px, calc(100vh - 220px)); overflow: auto; }
+    .replay-panel { margin-top: 16px; border-top: 1px solid #cbd5e1; padding-top: 14px; }
     .replay-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 12px; }
     .replay-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .replay-controls button { min-height: 38px; padding: 8px 12px; }
@@ -284,6 +284,11 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
     .replay-meta { display: grid; gap: 4px; margin-top: 10px; }
     .replay-meta strong { font-size: 18px; }
     .replay-meta span { color: #475569; }
+    .replay-log { display: grid; gap: 8px; margin-top: 14px; max-height: 260px; overflow: auto; padding-right: 2px; }
+    .replay-log button { min-height: 0; display: grid; grid-template-columns: 68px minmax(0, 1fr) auto; gap: 8px; align-items: center; width: 100%; padding: 9px 10px; text-align: left; background: #fffaf0; }
+    .replay-log button[aria-current="true"] { border-color: #d97706; background: #ffedd5; }
+    .replay-log strong, .replay-log span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .replay-log small { color: #64748b; font-weight: 800; }
     .live-dot { display: inline-flex; align-items: center; gap: 6px; color: #166534; font-weight: 800; }
     .live-dot::before { content: ""; width: 9px; height: 9px; border-radius: 999px; background: #22c55e; }
   </style>
@@ -443,11 +448,9 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       const selected = document.getElementById('selected-square');
       const played = document.getElementById('played-move');
       const history = document.getElementById('move-history');
-      const legal = document.getElementById('legal-moves');
       if (selected) selected.textContent = state.selectedSquare || 'none';
       if (played) played.textContent = state.chessMove || 'none';
       if (history) history.textContent = state.moveHistory.length ? state.moveHistory.join(' ') : 'none';
-      if (legal) legal.textContent = state.legalMoves.length ? state.legalMoves.join(', ') : 'none';
     }
     const replay = { frames: [], currentIndex: 0, playing: false, status: 'queued', pollTimer: null, playTimer: null };
     async function loadReplay(keepPosition) {
@@ -493,9 +496,41 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       if (counter) counter.textContent = (replay.currentIndex + 1) + ' / ' + Math.max(1, replay.frames.length);
       if (label) label.textContent = frame.label || 'Position';
       if (meta) meta.textContent = [frame.actor, frame.model, frame.move ? 'move ' + frame.move : '', frame.result].filter(Boolean).join(' · ');
+      renderReplayLog();
       if (live) {
         live.textContent = replay.status === 'running' || replay.status === 'queued' ? 'Live match' : 'Final';
         live.className = replay.status === 'running' || replay.status === 'queued' ? 'live-dot' : '';
+      }
+    }
+    function renderReplayLog() {
+      const log = document.getElementById('replay-log');
+      if (!log) return;
+      log.replaceChildren();
+      const frames = replay.frames.slice(1);
+      if (!frames.length) {
+        const empty = document.createElement('span');
+        empty.textContent = 'No moves recorded yet.';
+        log.appendChild(empty);
+        return;
+      }
+      for (const frame of frames) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.setAttribute('aria-current', String(frame.index === replay.currentIndex));
+        row.addEventListener('click', () => {
+          replay.playing = false;
+          window.clearInterval(replay.playTimer);
+          replay.currentIndex = frame.index;
+          applyReplayFrame();
+        });
+        const actor = document.createElement('strong');
+        actor.textContent = frame.actor || 'Agent';
+        const move = document.createElement('span');
+        move.textContent = [frame.model, frame.san || frame.move || frame.label].filter(Boolean).join(' · ');
+        const result = document.createElement('small');
+        result.textContent = frame.result || '';
+        row.append(actor, move, result);
+        log.appendChild(row);
       }
     }
     function stepReplay(delta) {
@@ -520,9 +555,6 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
     }
     function initReplay() {
       if (!matchId || objective !== 'chess_match') return;
-      document.getElementById('replay-prev')?.addEventListener('click', () => stepReplay(-1));
-      document.getElementById('replay-next')?.addEventListener('click', () => stepReplay(1));
-      document.getElementById('replay-play')?.addEventListener('click', toggleReplayPlayback);
       document.getElementById('replay-start')?.addEventListener('click', () => { replay.currentIndex = 0; applyReplayFrame(); });
       document.getElementById('replay-end')?.addEventListener('click', () => { replay.currentIndex = Math.max(0, replay.frames.length - 1); applyReplayFrame(); });
       document.getElementById('replay-slider')?.addEventListener('input', (event) => { replay.playing = false; replay.currentIndex = Number(event.target.value); applyReplayFrame(); });
@@ -628,30 +660,27 @@ function renderChess(targetMove: string, objective: TaskConfig['objective']['kin
     <div class="notation">
       <strong>Chess objective</strong>
       ${objective === 'chess_match'
-        ? '<p>Choose a legal move from the displayed legal moves. Click the source square first, then the destination square.</p>'
+        ? ''
         : `<p>Play <code>${escapeHtml(targetMove)}</code>: click the piece square first, then the destination square.</p>`}
-      <p>Selected square: <code id="selected-square">none</code></p>
-      <p>Played move: <code id="played-move">none</code></p>
-      <p>Move history: <code id="move-history">none</code></p>
-      <p>Legal moves: <code id="legal-moves">none</code></p>
-    </div>
-    <div class="replay-panel" id="replay-panel" hidden>
-      <div class="replay-head">
-        <strong>Match replay</strong>
-        <span id="replay-live"></span>
-      </div>
-      <div class="replay-controls">
-        <button id="replay-start" type="button">Start</button>
-        <button id="replay-prev" type="button">← Prev</button>
-        <button id="replay-play" type="button">Play</button>
-        <button id="replay-next" type="button">Next →</button>
-        <button id="replay-end" type="button">Latest</button>
-        <input id="replay-slider" type="range" min="0" max="0" value="0" aria-label="Replay move" />
-        <span id="replay-counter">0 / 0</span>
-      </div>
-      <div class="replay-meta">
-        <strong id="replay-label">Loading replay...</strong>
-        <span id="replay-meta">Use left and right arrow keys to step through moves.</span>
+      <p>Last move: <code id="played-move">none</code></p>
+      <code id="move-history" hidden>none</code>
+      <code id="selected-square" hidden>none</code>
+      <div class="replay-panel" id="replay-panel" hidden>
+        <div class="replay-head">
+          <strong>Match replay</strong>
+          <span id="replay-live"></span>
+        </div>
+        <div class="replay-controls">
+          <button id="replay-start" type="button">Start</button>
+          <button id="replay-end" type="button">Latest</button>
+          <input id="replay-slider" type="range" min="0" max="0" value="0" aria-label="Replay move" />
+          <span id="replay-counter">0 / 0</span>
+        </div>
+        <div class="replay-meta">
+          <strong id="replay-label">Loading replay...</strong>
+          <span id="replay-meta">Use left and right arrow keys to step through moves.</span>
+        </div>
+        <div class="replay-log" id="replay-log" aria-label="Full move log"></div>
       </div>
     </div>
   </div>`;

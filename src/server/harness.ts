@@ -16,11 +16,13 @@ export class BarebonesHarness {
     maxToolCalls: number;
     timeoutMs: number;
     contextDump?: string;
+    abortSignal?: AbortSignal;
   }): Promise<ModelOutput> {
     const modelInput: ModelInput = {
       system: this.systemPrompt(),
       observation: input.observation,
       contextDump: input.contextDump,
+      abortSignal: input.abortSignal,
       budget: {
         maxTokens: config.modelMaxTokens,
         maxToolCalls: input.maxToolCalls,

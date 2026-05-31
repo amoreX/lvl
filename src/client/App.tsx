@@ -304,6 +304,7 @@ function MatchList({
         <span>Model 2</span>
         <span>Started</span>
         <span>Duration</span>
+        <span>Cost</span>
         <span>Seed</span>
       </div>
       {matches.map((match) => {
@@ -320,6 +321,7 @@ function MatchList({
             <span>{agentBName}</span>
             <span>{formatDateTime(match.startedAt ?? match.createdAt)}</span>
             <span>{durationLabel(match)}</span>
+            <span>{costLabel(matchRuns)}</span>
             <span>{shortSeedLabel(match)}</span>
           </button>
         );
@@ -350,7 +352,7 @@ function MatchReplay({ detail, onCancel, onClose }: { detail: MatchDetail; onCan
           <h2>{displayMatchName(detail.match.name)}</h2>
           <p className="muted">
             {detail.match.status === 'running' ? 'Live replay updating automatically · ' : ''}
-            {detail.task.title} · {memoryLabel(detail.match.memoryMode)} · winner: {shortModelName(winnerName(detail.match, detail.runs, detail.runs.map((run) => run.model).filter(Boolean) as ModelConfig[]))} · {seedLabel(detail.match)} · duration {durationLabel(detail.match)} ·{' '}
+            {detail.task.title} · {memoryLabel(detail.match.memoryMode)} · winner: {shortModelName(winnerName(detail.match, detail.runs, detail.runs.map((run) => run.model).filter(Boolean) as ModelConfig[]))} · {seedLabel(detail.match)} · duration {durationLabel(detail.match)} · spent {costLabel(detail.runs)} ·{' '}
             <a href={`/task-pages/${detail.task.id}?seed=${detail.match.seed}&matchId=${detail.match.id}`} target="_blank" rel="noreferrer">open replay board</a>
           </p>
         </div>
@@ -568,6 +570,13 @@ function shortSeedLabel(match: Pick<MatchRecord, 'seed' | 'seedMode' | 'suiteInd
 
 function memoryLabel(mode: MatchRecord['memoryMode'] | undefined) {
   return mode === 'context_dump' ? 'context dump' : 'fresh state';
+}
+
+function costLabel(runs: Pick<RunRecord, 'costUsd'>[]) {
+  const total = runs.reduce((sum, run) => sum + (run.costUsd || 0), 0);
+  if (total === 0) return '$0';
+  if (total < 0.01) return `$${total.toFixed(4)}`;
+  return `$${total.toFixed(2)}`;
 }
 
 function winnerName(match: Pick<MatchRecord, 'winnerRunId' | 'status'>, runs: RunRecord[], models: ModelConfig[]) {

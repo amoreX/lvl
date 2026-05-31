@@ -166,6 +166,7 @@ export type ModelInput = {
   system: string;
   observation: Observation;
   contextDump?: string;
+  abortSignal?: AbortSignal;
   budget: {
     maxTokens: number;
     maxToolCalls: number;

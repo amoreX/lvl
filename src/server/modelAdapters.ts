@@ -8,6 +8,7 @@ export interface ModelAdapter {
 
 export class DummyModelAdapter implements ModelAdapter {
   async call(model: ModelConfig, input: ModelInput): Promise<ModelOutput> {
+    throwIfAborted(input.abortSignal);
     const started = Date.now();
     const script = model.id === 'dummy-chaotic'
       ? chaoticScript(input)
@@ -36,6 +37,9 @@ export class OpenRouterAdapter implements ModelAdapter {
     }
     const started = Date.now();
     const controller = new AbortController();
+    const abortFromMatch = () => controller.abort(input.abortSignal?.reason);
+    if (input.abortSignal?.aborted) abortFromMatch();
+    input.abortSignal?.addEventListener('abort', abortFromMatch, { once: true });
     const timeout = setTimeout(() => controller.abort(), config.modelRequestTimeoutMs);
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -63,7 +67,10 @@ export class OpenRouterAdapter implements ModelAdapter {
           },
         ],
       }),
-    }).finally(() => clearTimeout(timeout));
+    }).finally(() => {
+      clearTimeout(timeout);
+      input.abortSignal?.removeEventListener('abort', abortFromMatch);
+    });
     if (!response.ok) {
       throw new Error(`OpenRouter request failed with ${response.status}`);
     }
@@ -83,6 +90,11 @@ export class OpenRouterAdapter implements ModelAdapter {
       costUsd: estimateOpenRouterCost(data.usage?.prompt_tokens ?? 0, data.usage?.completion_tokens ?? 0),
     };
   }
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new Error('Model call aborted.');
 }
 
 export function adapterFor(model: ModelConfig): ModelAdapter {

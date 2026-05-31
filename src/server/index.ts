@@ -162,7 +162,7 @@ function chessReplay(detail: MatchDetail) {
     const proposed = proposedChessMove(step);
     const legalMarker = step.scoreEvents.find((event) => event.reason.startsWith('Legal move played:'));
     const actor = run.role === 'agentA' ? 'Agent A' : 'Agent B';
-    const model = run.model?.name ?? run.modelId;
+    const model = shortModelName(run.model?.name ?? run.modelId);
     const messages = step.scoreEvents.map((event) => event.reason);
 
     if (!proposed) {
@@ -227,7 +227,7 @@ function chessReplay(detail: MatchDetail) {
       id: run.id,
       role: run.role,
       modelId: run.modelId,
-      modelName: runsById.get(run.id)?.model?.name ?? run.modelId,
+      modelName: shortModelName(runsById.get(run.id)?.model?.name ?? run.modelId),
     })),
     frames,
   };
@@ -252,6 +252,28 @@ function squareFromRef(ref: number) {
   const file = String.fromCharCode(97 + (offset % 8));
   const rank = Math.floor(offset / 8) + 1;
   return `${file}${rank}`;
+}
+
+function shortModelName(value: string) {
+  return value
+    .replace(/^openrouter[-: ]/i, '')
+    .replace(/^anthropic[-: ]/i, '')
+    .replace(/^openai[-: ]/i, '')
+    .replace(/^google[-: ]/i, '')
+    .replace(/^meta[-: ]/i, '')
+    .replace(/\bClaude\s+/gi, '')
+    .replace(/\bAnthropic\s+/gi, '')
+    .replace(/\bOpenRouter\s+/gi, '')
+    .replace(/\bOpenAI\s+/gi, '')
+    .replace(/\bGoogle\s+/gi, '')
+    .replace(/\bDummy Strong\b/gi, 'Strong')
+    .replace(/\bDummy Chaotic\b/gi, 'Chaotic')
+    .replace(/sonnet-(\d)-(\d)/gi, 'Sonnet $1.$2')
+    .replace(/opus-(\d)-(\d)/gi, 'Opus $1.$2')
+    .replace(/gpt-(\d)-(\d)/gi, 'GPT $1.$2')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function chessBoardMap(chess: Chess) {

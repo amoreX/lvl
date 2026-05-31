@@ -7,12 +7,13 @@ import { BarebonesHarness } from './harness.js';
 import { scoreRun } from './scoring.js';
 import type { JsonStore } from './storage.js';
 
-type Job = () => Promise<void>;
+type Job = { matchId: string; run: () => Promise<void> };
 
 export class MatchOrchestrator {
   private queue: Job[] = [];
   private active = 0;
   private cancelled = new Set<string>();
+  private abortControllers = new Map<string, AbortController>();
 
   constructor(private readonly store: JsonStore) {}
 
@@ -58,6 +59,8 @@ export class MatchOrchestrator {
 
   async cancelMatch(matchId: string) {
     this.cancelled.add(matchId);
+    this.queue = this.queue.filter((job) => job.matchId !== matchId);
+    this.abortControllers.get(matchId)?.abort(new Error('Match cancelled.'));
     const match = await this.store.getMatch(matchId);
     if (!match) return null;
     await this.store.updateMatch(matchId, { status: 'cancelled', endedAt: new Date().toISOString() });
@@ -71,7 +74,7 @@ export class MatchOrchestrator {
   }
 
   enqueueMatch(matchId: string) {
-    this.queue.push(async () => this.runMatch(matchId));
+    this.queue.push({ matchId, run: async () => this.runMatch(matchId) });
     this.pump();
   }
 
@@ -80,7 +83,7 @@ export class MatchOrchestrator {
       const job = this.queue.shift();
       if (!job) return;
       this.active += 1;
-      void job()
+      void job.run()
         .catch(() => undefined)
         .finally(() => {
           this.active -= 1;
@@ -92,31 +95,40 @@ export class MatchOrchestrator {
   private async runMatch(matchId: string) {
     const detail = await this.store.matchDetail(matchId);
     if (!detail || this.cancelled.has(matchId)) return;
+    const abortController = new AbortController();
+    this.abortControllers.set(matchId, abortController);
     await this.store.updateMatch(matchId, { status: 'running', startedAt: new Date().toISOString() });
     try {
       if (detail.task.objective.kind === 'chess_match') {
-        await this.runChessMatch(matchId);
+        await this.runChessMatch(matchId, abortController.signal);
         return;
       }
       if (detail.match.runMode === 'parallel') {
-        await Promise.all(detail.runs.map((run) => this.runOne(run.id)));
+        await Promise.all(detail.runs.map((run) => this.runOne(run.id, abortController.signal)));
       } else {
         for (const run of detail.runs) {
           if (this.cancelled.has(matchId)) break;
-          await this.runOne(run.id);
+          await this.runOne(run.id, abortController.signal);
         }
       }
+      if (this.cancelled.has(matchId)) return;
       await this.finishMatch(matchId);
     } catch (error) {
+      if (this.cancelled.has(matchId) || abortController.signal.aborted || isAbortError(error)) {
+        await this.markMatchCancelled(matchId);
+        return;
+      }
       await this.store.updateMatch(matchId, {
         status: 'failed',
         endedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      this.abortControllers.delete(matchId);
     }
   }
 
-  private async runChessMatch(matchId: string) {
+  private async runChessMatch(matchId: string, abortSignal: AbortSignal) {
     const state = await this.store.all();
     const match = state.matches.find((item) => item.id === matchId);
     if (!match) throw new Error(`Match not found ${matchId}`);
@@ -155,9 +167,8 @@ export class MatchOrchestrator {
       await env.applyChessState(chessState(chess, 'Game started.'));
 
       for (let ply = 0; ply < maxPlies; ply += 1) {
-        if (this.cancelled.has(match.id)) {
-          await this.store.updateRun(whiteRun.id, { status: 'cancelled', endedAt: new Date().toISOString() });
-          await this.store.updateRun(blackRun.id, { status: 'cancelled', endedAt: new Date().toISOString() });
+        if (this.cancelled.has(match.id) || abortSignal.aborted) {
+          await this.markMatchCancelled(match.id);
           return;
         }
         if (chess.isGameOver()) break;
@@ -174,9 +185,15 @@ export class MatchOrchestrator {
           stepIndex: ply,
           observation,
           contextDump: match.memoryMode === 'context_dump' ? contextDump(historyByRunId[activeRun.id]) : undefined,
+          abortSignal,
           maxToolCalls: match.maxToolCalls,
           timeoutMs: config.defaultTimeoutMs,
         });
+
+        if (this.cancelled.has(match.id) || abortSignal.aborted) {
+          await this.markMatchCancelled(match.id);
+          return;
+        }
 
         await this.store.updateRun(activeRun.id, {
           status: 'executing_tool',
@@ -291,7 +308,7 @@ export class MatchOrchestrator {
     }
   }
 
-  private async runOne(runId: string) {
+  private async runOne(runId: string, abortSignal: AbortSignal) {
     const state = await this.store.all();
     const run = state.runs.find((item) => item.id === runId);
     if (!run) throw new Error(`Run not found ${runId}`);
@@ -313,7 +330,7 @@ export class MatchOrchestrator {
 
     try {
       for (let stepIndex = 0; stepIndex < match.maxSteps; stepIndex += 1) {
-      if (this.cancelled.has(match.id)) {
+      if (this.cancelled.has(match.id) || abortSignal.aborted) {
         await this.store.updateRun(runId, { status: 'cancelled', endedAt: new Date().toISOString() });
         return;
       }
@@ -324,9 +341,15 @@ export class MatchOrchestrator {
         stepIndex,
         observation,
         contextDump: match.memoryMode === 'context_dump' ? contextDump(priorSteps) : undefined,
+        abortSignal,
         maxToolCalls: match.maxToolCalls,
         timeoutMs: config.defaultTimeoutMs,
       });
+      if (this.cancelled.has(match.id) || abortSignal.aborted) {
+        await this.store.updateRun(runId, { status: 'cancelled', endedAt: new Date().toISOString() });
+        return;
+      }
+
       await this.store.updateRun(runId, {
         status: 'executing_tool',
         latencyMs: currentRun.latencyMs + modelOutput.latencyMs,
@@ -394,6 +417,19 @@ export class MatchOrchestrator {
       endedAt: new Date().toISOString(),
       winnerRunId: winner?.id ?? null,
     });
+  }
+
+  private async markMatchCancelled(matchId: string) {
+    const match = await this.store.getMatch(matchId);
+    if (!match) return;
+    const endedAt = new Date().toISOString();
+    await this.store.updateMatch(matchId, { status: 'cancelled', endedAt });
+    for (const runId of match.runIds) {
+      const run = await this.store.getRun(runId);
+      if (run && !['completed', 'failed', 'cancelled'].includes(run.status)) {
+        await this.store.updateRun(runId, { status: 'cancelled', endedAt });
+      }
+    }
   }
 
   private makeRun(
@@ -602,4 +638,8 @@ function roundScore(value: number, digits = 2) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && (error.name === 'AbortError' || /aborted|cancelled/i.test(error.message));
 }

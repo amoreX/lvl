@@ -298,10 +298,10 @@ button:disabled {
 .matchTableHead,
 .matchTableRow {
   display: grid;
-  grid-template-columns: minmax(220px, 1.6fr) minmax(110px, 0.8fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr) minmax(120px, 0.7fr) minmax(80px, 0.5fr) minmax(120px, 0.8fr);
+  grid-template-columns: minmax(220px, 1.6fr) minmax(110px, 0.8fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr) minmax(120px, 0.7fr) minmax(80px, 0.5fr) minmax(80px, 0.5fr) minmax(120px, 0.8fr);
   gap: 12px;
   align-items: center;
-  min-width: 980px;
+  min-width: 1080px;
 }
 
 .matchTableHead {
