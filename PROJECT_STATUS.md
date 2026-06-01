@@ -15,7 +15,7 @@ The app currently supports:
 - Auto-compacting long `Context dump` histories at harness time using the Ghost/Pi-style 70% context-window policy.
 - Replaying a match on a chess board with arrow keys, `Start`, `Latest`, a slider, and live polling.
 - Exporting PGN for a full paired match or a single game.
-- Adding first-pass heuristic chess quality scoring for legal moves.
+- Scoring legal moves with Stockfish centipawn loss when a local UCI binary is available, with heuristic fallback otherwise.
 - Viewing a scrollable move log next to the board.
 - Cancelling queued or running matches, including aborting in-flight OpenRouter requests.
 
@@ -40,10 +40,9 @@ npm run chess:match
   - `Fresh state`
   - `Context dump`
 - No user-facing seed controls; each match gets its runtime randomness internally when it starts.
-- Full-width match table with winner, models, start time, duration, and cost.
+- Full-width match table with paired-match score, models, start time, duration, and cost.
 - Delete action for removing an old match log, its runs, and its trace steps.
-- Match modal with filtered logs.
-- Game filters and paired-game summaries in the match modal.
+- Match modal with filtered logs, aggregate paired scoreboard, per-game result cards, quality average, illegal count, and PGN links.
 - Formatted model output, including fenced code blocks and raw JSON tool calls.
 
 ### Chess Runtime
@@ -60,11 +59,12 @@ npm run chess:match
 - Each user-created match launches two turn-based games in parallel: A-White/B-Black and B-White/A-Black.
 - Context dump compaction is treated as harness work and excluded from run latency/timer accounting.
 - Cancellation removes queued jobs, aborts the active model request, marks match/runs cancelled, and lets Chromium cleanup run in `finally`.
-- Scorecards are generated from game result, material, illegal move counts, tool efficiency, and heuristic move quality.
+- Scorecards are generated from game result, material, illegal move counts, tool efficiency, and Stockfish-backed move quality when available.
 
 ### Storage
 
-- JSON-backed storage remains in `data/lvl-state.json`.
+- SQLite-backed storage lives in `data/lvl-state.sqlite` by default.
+- Existing JSON state from `data/lvl-state.json` is imported automatically when the SQLite database is empty.
 - Seed tasks are now replaced with the current chess-only seed list on load, so old task definitions are not kept alive by persisted state.
 - Match runtime randomness is still stored internally for replay/environment use, but users no longer choose or see seeds in the match form/table.
 
@@ -90,20 +90,25 @@ GET  /api/analytics
 GET  /task-pages/chess-full-match?matchId=<matchId>&game=1
 ```
 
+### Stockfish
+
+- `src/server/stockfish.ts` talks to a UCI-compatible Stockfish binary.
+- Configure it with `STOCKFISH_PATH`, `STOCKFISH_DEPTH`, and `STOCKFISH_TIMEOUT_MS`.
+- If no binary is installed, move quality falls back to the local heuristic so matches still run.
+
 ## Known Limitations
 
-- No database yet; storage is JSON-file based.
 - No tournament scheduler yet.
-- Chess quality scoring is heuristic, not Stockfish-backed yet.
+- Stockfish is optional and depends on a local binary; there is no bundled WASM engine yet.
 - Context dump is compacted automatically, but compact summaries are still approximate and should be tuned with real long-match traces.
 - Cost estimates depend on provider usage metadata where available.
 
 ## Next Useful Work
 
-- Add Stockfish-backed move evaluation.
+- Bundle a Stockfish WASM/binary option so engine scoring works out of the box.
 - Add PGN import.
 - Add tournament batches when chess evaluation needs repeated randomized runs.
 - Add UI controls for context compaction window/threshold if needed.
 - Add better adjudication policy at move cap.
-- Move storage to SQLite once match volume grows.
+- Add storage compaction/archival once match volume grows.
 

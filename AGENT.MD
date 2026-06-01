@@ -36,11 +36,12 @@ npm run chess:match
 src/client/                  React UI
 src/server/index.ts          Express API
 src/server/orchestrator.ts   Chess match runner, cancellation, scoring
+src/server/stockfish.ts      Optional Stockfish UCI evaluator
 src/server/chromiumEnvironment.ts  Chess board runtime and replay page
 src/server/modelAdapters.ts  Dummy/OpenRouter model adapters
 src/server/browserActionParser.ts Browser action parser
 src/server/contextCompaction.ts Context dump compaction tracker
-src/server/storage.ts        JSON storage and analytics
+src/server/storage.ts        SQLite storage and analytics
 src/server/seeds.ts          Chess-only seed data
 src/shared/types.ts          Shared protocol types
 scripts/run-chess-match.ts   CLI chess match runner
@@ -60,6 +61,7 @@ PROJECT_STATUS.md            Current state and roadmap
 - Do not show non-chess games in docs, scripts, seeds, or runtime code.
 - Keep the normal replay focused on model actions, score events, output, and board moves.
 - Keep PGN export available through `GET /api/matches/:id/pgn`; `?game=1` or `?game=2` may narrow it to one game.
+- Keep the paired scoreboard visible in the modal: aggregate points, per-game result, quality average, illegal count, and PGN links.
 - Deleting a match log should remove the match, both runs, and their trace steps; if it is active, cancel it first.
 - Do not show screenshot banners or huge element-tree dumps by default.
 
@@ -89,6 +91,14 @@ Cancellation should:
 - Abort active model requests through `AbortController`.
 - Mark match/runs cancelled.
 - Let Chromium cleanup run in `finally`.
+
+## Storage
+
+The store API is still exported as `JsonStore` for compatibility, but persistence is SQLite-backed.
+
+- Default DB: `data/lvl-state.sqlite`.
+- Legacy JSON import: `data/lvl-state.json` is loaded once when the SQLite DB is empty.
+- Keep data mutations going through `src/server/storage.ts`; do not write directly to local files from orchestration code.
 
 If you touch cancellation, run:
 
@@ -138,7 +148,8 @@ They should remain explainable from:
 
 - Game result.
 - Material balance.
-- Heuristic chess quality (`chessQuality`) for captures, checks, material swing, and obvious hanging-piece risk.
+- Stockfish centipawn-loss quality when `STOCKFISH_PATH` points to a UCI binary.
+- Heuristic chess quality fallback when Stockfish is not installed.
 - Illegal/incomplete move counts.
 - Step/tool efficiency.
 - Cost and latency metadata.
