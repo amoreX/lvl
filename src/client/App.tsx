@@ -29,6 +29,9 @@ const api = {
   async cancel(id: string): Promise<MatchDetail> {
     return request(`/api/matches/${id}/cancel`, { method: 'POST' });
   },
+  async deleteMatch(id: string): Promise<void> {
+    await request(`/api/matches/${id}`, { method: 'DELETE' });
+  },
 };
 
 export function App() {
@@ -125,6 +128,11 @@ export function App() {
             models={data.models}
             selected={selectedMatchId}
             onSelect={setSelectedMatchId}
+            onDelete={async (id) => {
+              await api.deleteMatch(id);
+              if (selectedMatchId === id) setSelectedMatchId(null);
+              await refresh();
+            }}
           />
         </section>
       </main>
@@ -134,6 +142,11 @@ export function App() {
           onClose={() => setSelectedMatchId(null)}
           onCancel={async () => {
             await api.cancel(detail.match.id);
+            await refresh();
+          }}
+          onDelete={async () => {
+            await api.deleteMatch(detail.match.id);
+            setSelectedMatchId(null);
             await refresh();
           }}
         />
@@ -169,44 +182,24 @@ function MatchForm({
     taskId: defaultTask?.id ?? '',
     agentA: { modelId: models[0]?.id ?? '', harnessId: defaultHarness },
     agentB: { modelId: models[1]?.id ?? models[0]?.id ?? '', harnessId: defaultHarness },
-    seed: 818,
     memoryMode: 'fresh',
     runMode: 'sequential',
-    hurdlesEnabled: false,
     maxSteps: defaultTask?.maxSteps ?? 10,
     maxToolCalls: defaultTask?.maxToolCalls ?? 30,
   });
-  const [randomizeSeeds, setRandomizeSeeds] = useState(false);
-  const [suiteCount, setSuiteCount] = useState(1);
   const [submitting, setSubmitting] = useState(false);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setSubmitting(true);
     try {
-      const count = Math.max(1, Math.min(25, suiteCount));
-      const baseSeed = form.seed ?? Math.floor(Math.random() * 1_000_000);
-      let firstMatch: MatchRecord | null = null;
-      for (let index = 0; index < count; index += 1) {
-        const seedMode = randomizeSeeds ? 'random' : 'fixed';
-        const seed = randomizeSeeds
-          ? Math.floor(Math.random() * 1_000_000_000)
-          : baseSeed + index;
-        const match = await api.createMatch({
-          ...form,
-          name: count > 1 ? `${form.name} · ${index + 1}/${count}` : form.name,
-          taskId: defaultTask?.id ?? form.taskId,
-          runMode: 'sequential',
-          hurdlesEnabled: false,
-          seed,
-          seedMode,
-          suiteIndex: count > 1 ? index + 1 : undefined,
-          suiteCount: count > 1 ? count : undefined,
-          memoryMode: form.memoryMode ?? 'fresh',
-        });
-        firstMatch ??= match;
-      }
-      if (firstMatch) onCreated(firstMatch);
+      const match = await api.createMatch({
+        ...form,
+        taskId: defaultTask?.id ?? form.taskId,
+        runMode: 'sequential',
+        memoryMode: form.memoryMode ?? 'fresh',
+      });
+      onCreated(match);
     } finally {
       setSubmitting(false);
     }
@@ -232,28 +225,7 @@ function MatchForm({
       <p className="fieldHint">
         Fresh state sends only the current board. Context dump also sends each agent its own previous turns, raw outputs, tool calls, and score events.
       </p>
-      <div className={`seedGrid ${randomizeSeeds ? 'random' : ''}`}>
-        <label className="check seedToggle">
-          <input type="checkbox" checked={randomizeSeeds} onChange={(event) => setRandomizeSeeds(event.target.checked)} />
-          Randomize seeds
-        </label>
-        {!randomizeSeeds ? (
-          <label>
-            Seed
-            <input
-              type="number"
-              value={form.seed ?? ''}
-              onChange={(event) => setForm({ ...form, seed: Number(event.target.value) })}
-            />
-          </label>
-        ) : null}
-        <label>
-          {randomizeSeeds ? 'Random matches' : 'Seed count'}
-          <input type="number" min={1} max={randomizeSeeds ? 10 : 25} value={suiteCount} onChange={(event) => setSuiteCount(Math.max(1, Math.min(randomizeSeeds ? 10 : 25, Number(event.target.value))))} />
-        </label>
-      </div>
-      {randomizeSeeds ? <p className="fieldHint">Each match gets a generated seed. The exact seed is saved in the match log for reruns.</p> : null}
-      <button disabled={submitting}>{submitting ? 'Launching...' : suiteCount > 1 ? `Create ${suiteCount} Seed Suite` : 'Create and Run Match'}</button>
+      <button disabled={submitting}>{submitting ? 'Launching...' : 'Create and Run Match'}</button>
     </form>
   );
 }
@@ -287,12 +259,14 @@ function MatchList({
   models,
   selected,
   onSelect,
+  onDelete,
 }: {
   matches: MatchRecord[];
   runs: RunRecord[];
   models: ModelConfig[];
   selected: string | null;
   onSelect: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
 }) {
   if (!matches.length) return <p className="muted">No matches yet. Launch the first match.</p>;
   return (
@@ -305,7 +279,7 @@ function MatchList({
         <span>Started</span>
         <span>Duration</span>
         <span>Cost</span>
-        <span>Seed</span>
+        <span>Actions</span>
       </div>
       {matches.map((match) => {
         const matchRuns = runs.filter((run) => run.matchId === match.id);
@@ -314,7 +288,7 @@ function MatchList({
         const agentAName = shortModelName(models.find((model) => model.id === agentA?.modelId)?.name ?? agentA?.modelId ?? 'Agent A');
         const agentBName = shortModelName(models.find((model) => model.id === agentB?.modelId)?.name ?? agentB?.modelId ?? 'Agent B');
         return (
-          <button key={match.id} className={`matchTableRow ${selected === match.id ? 'active' : ''}`} onClick={() => onSelect(match.id)}>
+          <div key={match.id} className={`matchTableRow ${selected === match.id ? 'active' : ''}`} role="button" tabIndex={0} onClick={() => onSelect(match.id)} onKeyDown={(event) => event.key === 'Enter' && onSelect(match.id)}>
             <strong>{displayMatchName(match.name)}</strong>
             <span>{shortModelName(winnerName(match, matchRuns, models))}</span>
             <span>{agentAName}</span>
@@ -322,8 +296,16 @@ function MatchList({
             <span>{formatDateTime(match.startedAt ?? match.createdAt)}</span>
             <span>{durationLabel(match)}</span>
             <span>{costLabel(matchRuns)}</span>
-            <span>{shortSeedLabel(match)}</span>
-          </button>
+            <button
+              className="rowDelete"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (window.confirm('Delete this match log and all trace data?')) void onDelete(match.id);
+              }}
+            >
+              Delete
+            </button>
+          </div>
         );
       })}
     </div>
@@ -332,17 +314,17 @@ function MatchList({
 
 type RunFilter = 'all' | 'agentA' | 'agentB';
 
-function MatchModal({ detail, onClose, onCancel }: { detail: MatchDetail; onClose: () => void; onCancel: () => Promise<void> }) {
+function MatchModal({ detail, onClose, onCancel, onDelete }: { detail: MatchDetail; onClose: () => void; onCancel: () => Promise<void>; onDelete: () => Promise<void> }) {
   return (
     <div className="modalOverlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="modalPanel" role="dialog" aria-modal="true" aria-label={`${displayMatchName(detail.match.name)} details`}>
-        <MatchReplay detail={detail} onCancel={onCancel} onClose={onClose} />
+        <MatchReplay detail={detail} onCancel={onCancel} onDelete={onDelete} onClose={onClose} />
       </div>
     </div>
   );
 }
 
-function MatchReplay({ detail, onCancel, onClose }: { detail: MatchDetail; onCancel: () => Promise<void>; onClose: () => void }) {
+function MatchReplay({ detail, onCancel, onDelete, onClose }: { detail: MatchDetail; onCancel: () => Promise<void>; onDelete: () => Promise<void>; onClose: () => void }) {
   const [filter, setFilter] = useState<RunFilter>('all');
 
   return (
@@ -352,14 +334,15 @@ function MatchReplay({ detail, onCancel, onClose }: { detail: MatchDetail; onCan
           <h2>{displayMatchName(detail.match.name)}</h2>
           <p className="muted">
             {detail.match.status === 'running' ? 'Live replay updating automatically · ' : ''}
-            {detail.task.title} · {memoryLabel(detail.match.memoryMode)} · winner: {shortModelName(winnerName(detail.match, detail.runs, detail.runs.map((run) => run.model).filter(Boolean) as ModelConfig[]))} · {seedLabel(detail.match)} · duration {durationLabel(detail.match)} · spent {costLabel(detail.runs)} ·{' '}
-            <a href={`/task-pages/${detail.task.id}?seed=${detail.match.seed}&matchId=${detail.match.id}`} target="_blank" rel="noreferrer">open replay board</a>
+            {detail.task.title} · {memoryLabel(detail.match.memoryMode)} · winner: {shortModelName(winnerName(detail.match, detail.runs, detail.runs.map((run) => run.model).filter(Boolean) as ModelConfig[]))} · duration {durationLabel(detail.match)} · spent {costLabel(detail.runs)} ·{' '}
+            <a href={`/task-pages/${detail.task.id}?matchId=${detail.match.id}`} target="_blank" rel="noreferrer">open replay board</a>
           </p>
         </div>
         <div className="modalActions">
           {detail.match.status === 'running' || detail.match.status === 'queued'
             ? <button className="danger" onClick={() => window.confirm('Cancel this match and preserve the partial trace?') && void onCancel()}>Cancel</button>
             : <span className={`pill ${detail.match.status}`}>{detail.match.status}</span>}
+          <button className="danger secondaryDanger" onClick={() => window.confirm('Delete this match log and all trace data?') && void onDelete()}>Delete</button>
           <button className="subtle" onClick={onClose}>Close</button>
         </div>
       </div>
@@ -550,22 +533,6 @@ function Bar({ label, value, suffix }: { label: string; value: number; suffix?: 
       <b>{suffix ?? value.toFixed(0)}</b>
     </div>
   );
-}
-
-function seedLabel(match: Pick<MatchRecord, 'seed' | 'seedMode' | 'suiteIndex' | 'suiteCount'>) {
-  const mode = match.seedMode === 'random' ? 'random seed' : 'fixed seed';
-  const suite = match.suiteCount && match.suiteCount > 1
-    ? ` · ${match.suiteIndex ?? '?'} of ${match.suiteCount}`
-    : '';
-  return `${mode} ${match.seed}${suite}`;
-}
-
-function shortSeedLabel(match: Pick<MatchRecord, 'seed' | 'seedMode' | 'suiteIndex' | 'suiteCount'>) {
-  const mode = match.seedMode === 'random' ? 'random' : 'fixed';
-  const suite = match.suiteCount && match.suiteCount > 1
-    ? ` ${match.suiteIndex ?? '?'}/${match.suiteCount}`
-    : '';
-  return `${mode} ${match.seed}${suite}`;
 }
 
 function memoryLabel(mode: MatchRecord['memoryMode'] | undefined) {

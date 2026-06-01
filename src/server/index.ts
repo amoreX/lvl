@@ -92,6 +92,19 @@ app.post('/api/matches/:id/cancel', async (req, res, next) => {
   }
 });
 
+app.delete('/api/matches/:id', async (req, res, next) => {
+  try {
+    const deleted = await orchestrator.deleteMatch(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'match not found' });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/analytics', async (_req, res, next) => {
   try {
     res.json(await store.analytics());
@@ -108,7 +121,10 @@ app.get('/task-pages/:taskId', async (req, res, next) => {
       res.status(404).send('Task not found');
       return;
     }
-    const seed = Number(req.query.seed || 818);
+    const match = typeof req.query.matchId === 'string'
+      ? state.matches.find((item) => item.id === req.query.matchId)
+      : null;
+    const seed = match?.seed || Math.floor(Math.random() * 1_000_000_000) + 1;
     res.type('html').send(renderTaskPage(task, seed));
   } catch (error) {
     next(error);
@@ -310,13 +326,8 @@ const createMatchSchema = z.object({
     modelId: z.string().min(1),
     harnessId: z.string().min(1),
   }),
-  seed: z.number().int().positive().optional(),
-  seedMode: z.enum(['fixed', 'random']).optional(),
-  suiteIndex: z.number().int().positive().optional(),
-  suiteCount: z.number().int().positive().optional(),
   memoryMode: z.enum(['fresh', 'context_dump']).optional(),
   runMode: z.enum(['sequential', 'parallel']),
   maxSteps: z.number().int().positive().optional(),
   maxToolCalls: z.number().int().positive().optional(),
-  hurdlesEnabled: z.boolean(),
 });

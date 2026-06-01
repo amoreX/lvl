@@ -3,8 +3,8 @@ import { Chess, type Color, type PieceSymbol, type Square } from 'chess.js';
 import type { CreateMatchInput, MatchRecord, RunRecord, Scorecard, ScoreEvent, TaskConfig, TraceStep } from '../shared/types.js';
 import { ChromiumGameEnvironment } from './chromiumEnvironment.js';
 import { config } from './config.js';
+import { ContextCompactionTracker } from './contextCompaction.js';
 import { BarebonesHarness } from './harness.js';
-import { scoreRun } from './scoring.js';
 import type { JsonStore } from './storage.js';
 
 type Job = { matchId: string; run: () => Promise<void> };
@@ -29,7 +29,7 @@ export class MatchOrchestrator {
 
     const now = new Date().toISOString();
     const matchId = randomUUID();
-    const seed = input.seed || Math.floor(Math.random() * 1_000_000);
+    const seed = 0;
     const runs: RunRecord[] = [
       this.makeRun(matchId, 'agentA', input.agentA.modelId, input.agentA.harnessId, task, seed, now),
       this.makeRun(matchId, 'agentB', input.agentB.modelId, input.agentB.harnessId, task, seed, now),
@@ -39,15 +39,11 @@ export class MatchOrchestrator {
       name: input.name || `${modelA.name} vs ${modelB.name}`,
       taskId: task.id,
       seed,
-      seedMode: input.seedMode || (input.seed == null ? 'random' : 'fixed'),
-      suiteIndex: input.suiteIndex,
-      suiteCount: input.suiteCount,
       memoryMode: input.memoryMode || 'fresh',
       runMode: input.runMode,
       status: 'queued',
       maxSteps: input.maxSteps || task.maxSteps || config.defaultMaxSteps,
       maxToolCalls: input.maxToolCalls || task.maxToolCalls || config.defaultMaxToolCalls,
-      hurdlesEnabled: input.hurdlesEnabled,
       runIds: runs.map((run) => run.id),
       winnerRunId: null,
       createdAt: now,
@@ -71,6 +67,15 @@ export class MatchOrchestrator {
       }
     }
     return this.store.matchDetail(matchId);
+  }
+
+  async deleteMatch(matchId: string) {
+    const match = await this.store.getMatch(matchId);
+    if (!match) return false;
+    if (!['completed', 'failed', 'cancelled'].includes(match.status)) {
+      await this.cancelMatch(matchId);
+    }
+    return this.store.deleteMatch(matchId);
   }
 
   enqueueMatch(matchId: string) {
@@ -97,22 +102,13 @@ export class MatchOrchestrator {
     if (!detail || this.cancelled.has(matchId)) return;
     const abortController = new AbortController();
     this.abortControllers.set(matchId, abortController);
-    await this.store.updateMatch(matchId, { status: 'running', startedAt: new Date().toISOString() });
+    const runtimeSeed = randomSeed();
+    await this.store.updateMatch(matchId, { status: 'running', startedAt: new Date().toISOString(), seed: runtimeSeed });
+    for (const runId of detail.match.runIds) {
+      await this.store.updateRun(runId, { seed: runtimeSeed });
+    }
     try {
-      if (detail.task.objective.kind === 'chess_match') {
-        await this.runChessMatch(matchId, abortController.signal);
-        return;
-      }
-      if (detail.match.runMode === 'parallel') {
-        await Promise.all(detail.runs.map((run) => this.runOne(run.id, abortController.signal)));
-      } else {
-        for (const run of detail.runs) {
-          if (this.cancelled.has(matchId)) break;
-          await this.runOne(run.id, abortController.signal);
-        }
-      }
-      if (this.cancelled.has(matchId)) return;
-      await this.finishMatch(matchId);
+      await this.runChessMatch(matchId, abortController.signal);
     } catch (error) {
       if (this.cancelled.has(matchId) || abortController.signal.aborted || isAbortError(error)) {
         await this.markMatchCancelled(matchId);
@@ -144,7 +140,7 @@ export class MatchOrchestrator {
     if (!whiteModel || !blackModel || !whiteHarnessConfig || !blackHarnessConfig) throw new Error('Chess run dependencies missing.');
 
     const chess = new Chess();
-    const env = new ChromiumGameEnvironment(task, match.seed, false);
+    const env = new ChromiumGameEnvironment(task, match.seed);
     const harnessByColor = {
       w: new BarebonesHarness(whiteHarnessConfig, whiteModel),
       b: new BarebonesHarness(blackHarnessConfig, blackModel),
@@ -153,10 +149,15 @@ export class MatchOrchestrator {
     const runStartedAt = { w: Date.now(), b: Date.now() } satisfies Record<Color, number>;
     const maxPlies = Math.min(match.maxSteps || task.objective.maxPlies || 120, task.objective.maxPlies || 120);
     const illegalCounts = { w: 0, b: 0 } satisfies Record<Color, number>;
+    const compactionExcludedMs = { w: 0, b: 0 } satisfies Record<Color, number>;
     let currentRunByColor = { w: whiteRun, b: blackRun } satisfies Record<Color, RunRecord>;
     const historyByRunId: Record<string, TraceStep[]> = {
       [whiteRun.id]: [],
       [blackRun.id]: [],
+    };
+    const compactionByRunId: Record<string, ContextCompactionTracker> = {
+      [whiteRun.id]: new ContextCompactionTracker(),
+      [blackRun.id]: new ContextCompactionTracker(),
     };
 
     await this.store.updateRun(whiteRun.id, { status: 'running', startedAt: new Date().toISOString() });
@@ -177,6 +178,10 @@ export class MatchOrchestrator {
         const activeRun = currentRunByColor[color];
         const harness = harnessByColor[color];
         const observation = await env.currentObservation(ply);
+        const preparedContext = match.memoryMode === 'context_dump'
+          ? compactionByRunId[activeRun.id].prepare(historyByRunId[activeRun.id])
+          : { contextDump: undefined, compacted: false, elapsedMs: 0 };
+        compactionExcludedMs[color] += preparedContext.elapsedMs;
 
         await this.store.updateRun(activeRun.id, { status: 'waiting_for_model' });
         const modelOutput = await harness.runStep({
@@ -184,7 +189,7 @@ export class MatchOrchestrator {
           seed: activeRun.seed,
           stepIndex: ply,
           observation,
-          contextDump: match.memoryMode === 'context_dump' ? contextDump(historyByRunId[activeRun.id]) : undefined,
+          contextDump: preparedContext.contextDump,
           abortSignal,
           maxToolCalls: match.maxToolCalls,
           timeoutMs: config.defaultTimeoutMs,
@@ -204,6 +209,9 @@ export class MatchOrchestrator {
         const result = await env.executeBrowserTool(modelOutput.browserTool!, activeRun.id, ply);
         const proposedMove = chessProposedMove(result.observation.pageState);
         const scoreEvents = [...result.scoreEvents];
+        if (preparedContext.compacted) {
+          scoreEvents.push(chessEvent(activeRun.id, ply, 'progress', 0, 'Harness auto-compacted own prior-turn context before this move.'));
+        }
         let legalMovePlayed = false;
 
         if (!proposedMove) {
@@ -269,6 +277,7 @@ export class MatchOrchestrator {
         chess,
         illegalCount: illegalCounts.w,
         startedAt: runStartedAt.w,
+        excludedMs: compactionExcludedMs.w,
       });
       const blackScorecard = chessScorecard({
         color: 'b',
@@ -277,13 +286,14 @@ export class MatchOrchestrator {
         chess,
         illegalCount: illegalCounts.b,
         startedAt: runStartedAt.b,
+        excludedMs: compactionExcludedMs.b,
       });
 
       const endedAt = new Date().toISOString();
       await this.store.updateRun(whiteRun.id, {
         status: 'completed',
         endedAt,
-        latencyMs: Date.now() - runStartedAt.w,
+        latencyMs: Math.max(0, Date.now() - runStartedAt.w - compactionExcludedMs.w),
         scorecard: whiteScorecard,
         failureLabels: whiteScorecard.failureLabels,
         costUsd: whiteScorecard.costUsd,
@@ -291,7 +301,7 @@ export class MatchOrchestrator {
       await this.store.updateRun(blackRun.id, {
         status: 'completed',
         endedAt,
-        latencyMs: Date.now() - runStartedAt.b,
+        latencyMs: Math.max(0, Date.now() - runStartedAt.b - compactionExcludedMs.b),
         scorecard: blackScorecard,
         failureLabels: blackScorecard.failureLabels,
         costUsd: blackScorecard.costUsd,
@@ -306,117 +316,6 @@ export class MatchOrchestrator {
     } finally {
       await env.dispose();
     }
-  }
-
-  private async runOne(runId: string, abortSignal: AbortSignal) {
-    const state = await this.store.all();
-    const run = state.runs.find((item) => item.id === runId);
-    if (!run) throw new Error(`Run not found ${runId}`);
-    const match = state.matches.find((item) => item.id === run.matchId);
-    const task = state.tasks.find((item) => item.id === run.taskId);
-    const model = state.models.find((item) => item.id === run.modelId);
-    const harnessConfig = state.harnesses.find((item) => item.id === run.harnessId);
-    if (!match || !task || !model || !harnessConfig) throw new Error('Run dependencies missing.');
-    if (this.cancelled.has(match.id)) return;
-
-    const env = new ChromiumGameEnvironment(task, run.seed, match.hurdlesEnabled);
-    const harness = new BarebonesHarness(harnessConfig, model);
-    let observation = await env.reset();
-    let currentRun = run;
-    const priorSteps: TraceStep[] = [];
-    const runStarted = Date.now();
-
-    await this.store.updateRun(runId, { status: 'running', startedAt: new Date().toISOString() });
-
-    try {
-      for (let stepIndex = 0; stepIndex < match.maxSteps; stepIndex += 1) {
-      if (this.cancelled.has(match.id) || abortSignal.aborted) {
-        await this.store.updateRun(runId, { status: 'cancelled', endedAt: new Date().toISOString() });
-        return;
-      }
-      await this.store.updateRun(runId, { status: 'waiting_for_model' });
-      const modelOutput = await harness.runStep({
-        runId,
-        seed: run.seed,
-        stepIndex,
-        observation,
-        contextDump: match.memoryMode === 'context_dump' ? contextDump(priorSteps) : undefined,
-        abortSignal,
-        maxToolCalls: match.maxToolCalls,
-        timeoutMs: config.defaultTimeoutMs,
-      });
-      if (this.cancelled.has(match.id) || abortSignal.aborted) {
-        await this.store.updateRun(runId, { status: 'cancelled', endedAt: new Date().toISOString() });
-        return;
-      }
-
-      await this.store.updateRun(runId, {
-        status: 'executing_tool',
-        latencyMs: currentRun.latencyMs + modelOutput.latencyMs,
-        costUsd: currentRun.costUsd + modelOutput.costUsd,
-      });
-
-      const result = await env.executeBrowserTool(modelOutput.browserTool!, runId, stepIndex);
-      const step: TraceStep = {
-        id: randomUUID(),
-        runId,
-        stepIndex,
-        observation,
-        modelOutput,
-        toolCall: result.toolCall,
-        scoreEvents: result.scoreEvents,
-        createdAt: new Date().toISOString(),
-      };
-      await this.store.addStep(step);
-      priorSteps.push(step);
-      currentRun = {
-        ...currentRun,
-        stepCount: stepIndex + 1,
-        toolCallCount: currentRun.toolCallCount + result.toolCall.actions.length,
-        latencyMs: currentRun.latencyMs + result.toolCall.latencyMs,
-        costUsd: currentRun.costUsd + modelOutput.costUsd,
-      };
-      await this.store.updateRun(runId, {
-        status: 'running',
-        stepCount: currentRun.stepCount,
-        toolCallCount: currentRun.toolCallCount,
-        latencyMs: currentRun.latencyMs,
-        costUsd: currentRun.costUsd,
-      });
-      observation = result.observation;
-      if (result.done) break;
-      await sleep(120);
-      }
-    } finally {
-      await env.dispose();
-    }
-
-    await this.store.updateRun(runId, { status: 'scoring' });
-    const steps = (await this.store.all()).steps.filter((step) => step.runId === runId);
-    const latestRun = await this.store.getRun(runId);
-    const scorecard = scoreRun(latestRun ?? currentRun, task, steps);
-    await this.store.updateRun(runId, {
-      status: 'completed',
-      endedAt: new Date().toISOString(),
-      latencyMs: Date.now() - runStarted,
-      scorecard,
-      failureLabels: scorecard.failureLabels,
-      costUsd: scorecard.costUsd,
-    });
-  }
-
-  private async finishMatch(matchId: string) {
-    const detail = await this.store.matchDetail(matchId);
-    if (!detail) return;
-    const completed = detail.runs.filter((run) => run.status === 'completed' && run.scorecard);
-    const winner = completed
-      .slice()
-      .sort((a, b) => (b.scorecard?.total ?? 0) - (a.scorecard?.total ?? 0))[0];
-    await this.store.updateMatch(matchId, {
-      status: this.cancelled.has(matchId) ? 'cancelled' : 'completed',
-      endedAt: new Date().toISOString(),
-      winnerRunId: winner?.id ?? null,
-    });
   }
 
   private async markMatchCancelled(matchId: string) {
@@ -521,26 +420,6 @@ function pieceGlyph(color: Color, type: PieceSymbol) {
   return glyphs[color][type];
 }
 
-function contextDump(steps: TraceStep[]) {
-  if (!steps.length) return 'No previous turns for this agent.';
-  return steps.map((step) => {
-    const toolInput = step.toolCall?.input.mode === 'run'
-      ? step.toolCall.input.script
-      : step.toolCall?.input.mode ?? 'none';
-    const actions = step.toolCall?.actions.map((action) => `${action.action}:${action.successful ? 'ok' : action.error ?? 'failed'}`).join(', ') || 'none';
-    const score = step.scoreEvents.map((event) => `${event.delta >= 0 ? '+' : ''}${event.delta} ${event.dimension}: ${event.reason}`).join(' | ') || 'none';
-    const { screenshotDataUrl: _screenshotDataUrl, ...observation } = step.observation;
-    return [
-      `Turn ${step.stepIndex + 1}`,
-      `Observation:\n${JSON.stringify(observation, null, 2)}`,
-      `Model output:\n${step.modelOutput.rawText}`,
-      `Tool input:\n${toolInput}`,
-      `Tool actions: ${actions}`,
-      `Score events: ${score}`,
-    ].join('\n');
-  }).join('\n\n---\n\n');
-}
-
 function chessStatus(chess: Chess) {
   if (chess.isCheckmate()) return 'checkmate';
   if (chess.isStalemate()) return 'stalemate';
@@ -584,6 +463,7 @@ function chessScorecard(input: {
   chess: Chess;
   illegalCount: number;
   startedAt: number;
+  excludedMs: number;
 }): Scorecard {
   const won = input.result.winner === input.color;
   const drew = input.result.winner == null;
@@ -612,7 +492,7 @@ function chessScorecard(input: {
     toolUseQuality,
     consistency,
     costUsd: roundScore(input.run.costUsd, 6),
-    latencyMs: Date.now() - input.startedAt,
+    latencyMs: Math.max(0, Date.now() - input.startedAt - input.excludedMs),
     failureLabels,
     rubricVersion: `chess-0.1.0:${input.result.reason}`,
   };
@@ -634,6 +514,10 @@ function clampScore(value: number) {
 
 function roundScore(value: number, digits = 2) {
   return Number(value.toFixed(digits));
+}
+
+function randomSeed() {
+  return Math.floor(Math.random() * 1_000_000_000) + 1;
 }
 
 function sleep(ms: number) {

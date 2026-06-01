@@ -61,7 +61,7 @@ export class OpenRouterAdapter implements ModelAdapter {
             content: [
               'Return only JSON for one browser tool call.',
               'Schema: {"mode":"run","script":"const tab = await browser.currentTab(); await tab.snapshot(); ...; return await tab.snapshot();"}',
-              input.contextDump ? `Own prior-turn context dump:\n${input.contextDump}` : 'Own prior-turn context dump: disabled for this match.',
+              input.contextDump ? `Own prior-turn context dump (may be harness-compacted):\n${input.contextDump}` : 'Own prior-turn context dump: disabled for this match.',
               `Observation:\n${JSON.stringify(input.observation, null, 2)}`,
             ].join('\n\n'),
           },
@@ -108,22 +108,6 @@ function strongScript(input: ModelInput) {
   if (chessMove) {
     return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${chessMove.from}); await tab.click(${chessMove.to}); return await tab.snapshot();`;
   }
-  const target = elements.find((el) => /target tile|real target|highlighted target/i.test(el.label));
-  const close = elements.find((el) => /close|dismiss/i.test(el.label));
-  const add = elements.find((el) => /add to cart/i.test(el.label));
-  const confirm = elements.find((el) => /^confirm checkout$/i.test(el.label) || /^confirm$/i.test(el.label));
-  if (close) {
-    return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${close.ref}); return await tab.snapshot();`;
-  }
-  if (target) {
-    return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${target.ref}); return await tab.snapshot();`;
-  }
-  if (add) {
-    return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${add.ref}); return await tab.snapshot();`;
-  }
-  if (confirm) {
-    return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${confirm.ref}); return await tab.snapshot();`;
-  }
   return 'const tab = await browser.currentTab(); return await tab.snapshot();';
 }
 
@@ -148,13 +132,11 @@ function nextDeterministicChessMove(elements: ModelInput['observation']['element
 
 function chaoticScript(input: ModelInput) {
   const elements = input.observation.elements;
-  const decoy = elements.find((el) => /decoy|cancel|newsletter|trap tile/i.test(el.label));
-  const fallback = elements.find((el) => /confirm|add|close|target tile/i.test(el.label)) ?? elements[0];
-  if (input.metadata.stepIndex % 3 === 1 && decoy) {
-    return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${decoy.ref}); return await tab.snapshot();`;
-  }
-  if (fallback) {
-    return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${fallback.ref}); return await tab.snapshot();`;
+  const chessSquares = elements.filter((el) => /square|pawn|knight|bishop|rook|queen|king/i.test(el.label));
+  const from = chessSquares[input.metadata.stepIndex % Math.max(chessSquares.length, 1)];
+  const to = chessSquares[(input.metadata.stepIndex + 9) % Math.max(chessSquares.length, 1)];
+  if (from && to) {
+    return `const tab = await browser.currentTab(); await tab.snapshot(); await tab.click(${from.ref}); await tab.click(${to.ref}); return await tab.snapshot();`;
   }
   return 'const tab = await browser.currentTab(); return await tab.snapshot();';
 }

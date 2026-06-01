@@ -165,6 +165,18 @@ export class JsonStore {
     });
   }
 
+  async deleteMatch(matchId: string) {
+    return this.mutate((state) => {
+      const match = state.matches.find((item) => item.id === matchId);
+      if (!match) return false;
+      const runIds = new Set(state.runs.filter((run) => run.matchId === matchId).map((run) => run.id));
+      state.matches = state.matches.filter((item) => item.id !== matchId);
+      state.runs = state.runs.filter((run) => run.matchId !== matchId);
+      state.steps = state.steps.filter((step) => !runIds.has(step.runId));
+      return true;
+    });
+  }
+
   async getRun(runId: string) {
     const state = await this.load();
     return state.runs.find((run) => run.id === runId) ?? null;
@@ -179,7 +191,7 @@ export class JsonStore {
     return {
       models: mergeById(state.models, seedModels),
       harnesses: mergeById(state.harnesses, seedHarnesses),
-      tasks: mergeById(state.tasks, seedTasks),
+      tasks: seedTasks,
       matches: (state.matches ?? []).map((match) => ({
         ...match,
         memoryMode: match.memoryMode ?? 'fresh',

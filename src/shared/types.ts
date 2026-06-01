@@ -11,7 +11,6 @@ export type RunStatus =
   | 'cancelled';
 
 export type RunMode = 'sequential' | 'parallel';
-export type SeedMode = 'fixed' | 'random';
 export type MemoryMode = 'fresh' | 'context_dump';
 
 export type ModelProvider = 'dummy' | 'openrouter' | 'manual';
@@ -59,13 +58,6 @@ export type HarnessConfig = {
   toolSchemaHash: string;
 };
 
-export type HurdleConfig = {
-  id: string;
-  type: 'popup' | 'moving_target' | 'tool_failure';
-  stepIndex: number;
-  payload: Record<string, unknown>;
-};
-
 export type TaskConfig = {
   id: string;
   title: string;
@@ -76,11 +68,8 @@ export type TaskConfig = {
   maxToolCalls: number;
   difficulty: 'easy' | 'medium' | 'hard';
   allowedTools: string[];
-  hurdles: HurdleConfig[];
   objective: {
-    kind: 'checkout' | 'target_game' | 'chess_move' | 'chess_match';
-    targetScore?: number;
-    targetMove?: string;
+    kind: 'chess_match';
     maxPlies?: number;
   };
 };
@@ -90,15 +79,10 @@ export type CreateMatchInput = {
   taskId: string;
   agentA: { modelId: string; harnessId: string };
   agentB: { modelId: string; harnessId: string };
-  seed?: number;
-  seedMode?: SeedMode;
-  suiteIndex?: number;
-  suiteCount?: number;
   memoryMode?: MemoryMode;
   runMode: RunMode;
   maxSteps?: number;
   maxToolCalls?: number;
-  hurdlesEnabled: boolean;
 };
 
 export type MatchRecord = {
@@ -106,15 +90,11 @@ export type MatchRecord = {
   name: string;
   taskId: string;
   seed: number;
-  seedMode: SeedMode;
-  suiteIndex?: number;
-  suiteCount?: number;
   memoryMode: MemoryMode;
   runMode: RunMode;
   status: EntityStatus;
   maxSteps: number;
   maxToolCalls: number;
-  hurdlesEnabled: boolean;
   runIds: string[];
   winnerRunId?: string | null;
   createdAt: string;
@@ -157,7 +137,6 @@ export type Observation = {
     label: string;
     state?: string;
   }>;
-  hurdle?: HurdleConfig | null;
   screenshotDataUrl?: string;
   pageState: Record<string, unknown>;
 };

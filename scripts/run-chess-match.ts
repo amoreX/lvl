@@ -13,7 +13,6 @@ const orchestrator = new MatchOrchestrator(store);
 const whiteModel = process.env.CHESS_WHITE_MODEL || 'openrouter-gpt-4o-mini';
 const blackModel = process.env.CHESS_BLACK_MODEL || 'openrouter-qwen-9b';
 const maxPlies = Number(process.env.CHESS_MAX_PLIES || 16);
-const seed = Number(process.env.CHESS_SEED || 1201);
 
 async function main() {
   await fs.rm('./data/lvl-state.json', { force: true });
@@ -25,9 +24,7 @@ async function main() {
     taskId: 'chess-full-match',
     agentA: { modelId: whiteModel, harnessId: 'ghost-barebones' },
     agentB: { modelId: blackModel, harnessId: 'ghost-barebones' },
-    seed,
     runMode: 'sequential',
-    hurdlesEnabled: false,
     maxSteps: maxPlies,
     maxToolCalls: maxPlies * 6,
   });

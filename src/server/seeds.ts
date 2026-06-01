@@ -11,7 +11,7 @@ export const seedModels: ModelConfig[] = [
     provider: 'dummy',
     name: 'Dummy Strong',
     version: '0.1.0',
-    description: 'Deterministic local agent that reads the snapshot, closes popups, and clicks the intended target.',
+    description: 'Deterministic local chess agent that reads the board and plays a simple legal-looking opening plan.',
     enabled: true,
   },
   {
@@ -19,7 +19,7 @@ export const seedModels: ModelConfig[] = [
     provider: 'dummy',
     name: 'Dummy Chaotic',
     version: '0.1.0',
-    description: 'Local baseline that sometimes loops, clicks decoys, and ignores verification.',
+    description: 'Local chess baseline that intentionally makes noisier move choices.',
     enabled: true,
   },
   {
@@ -127,98 +127,6 @@ export const seedHarnesses: HarnessConfig[] = [
 
 export const seedTasks: TaskConfig[] = [
   {
-    id: 'simple-checkout-popup',
-    title: 'Checkout With Popup',
-    version: '0.1.0',
-    environment: 'chromium_game',
-    instructions: 'Close any newsletter popup, add the product to cart, and press Confirm Checkout.',
-    maxSteps: 8,
-    maxToolCalls: 24,
-    difficulty: 'easy',
-    allowedTools: ['browser'],
-    objective: {
-      kind: 'checkout',
-    },
-    hurdles: [
-      {
-        id: 'newsletter-popup',
-        type: 'popup',
-        stepIndex: 1,
-        payload: {
-          title: 'Newsletter popup',
-          closeRef: 7,
-          penaltyIfIgnored: 12,
-        },
-      },
-    ],
-  },
-  {
-    id: 'confirm-button-decoy',
-    title: 'Confirm The Real Target',
-    version: '0.1.0',
-    environment: 'chromium_game',
-    instructions: 'Click the real Confirm button. Avoid the decoy button.',
-    maxSteps: 6,
-    maxToolCalls: 18,
-    difficulty: 'easy',
-    allowedTools: ['browser'],
-    objective: {
-      kind: 'checkout',
-    },
-    hurdles: [],
-  },
-  {
-    id: 'target-grid-duel',
-    title: 'Target Grid Duel',
-    version: '0.1.0',
-    environment: 'chromium_game',
-    instructions: 'Score three points by clicking only the highlighted target tile. Avoid decoys and close any obstacle popup.',
-    maxSteps: 10,
-    maxToolCalls: 30,
-    difficulty: 'medium',
-    allowedTools: ['browser'],
-    objective: {
-      kind: 'target_game',
-      targetScore: 3,
-    },
-    hurdles: [
-      {
-        id: 'midgame-popup',
-        type: 'popup',
-        stepIndex: 2,
-        payload: {
-          title: 'Obstacle popup',
-          closeRef: 7,
-          penaltyIfIgnored: 12,
-        },
-      },
-      {
-        id: 'moving-target',
-        type: 'moving_target',
-        stepIndex: 4,
-        payload: {
-          note: 'Target position changes after successful hits.',
-        },
-      },
-    ],
-  },
-  {
-    id: 'chess-opening-e4',
-    title: 'Chess Opening: Play e4',
-    version: '0.1.0',
-    environment: 'chromium_game',
-    instructions: 'You are White. Play the first chess move 1. e4 by clicking the pawn on e2, then clicking the destination square e4. No hurdles are enabled for this task.',
-    maxSteps: 40,
-    maxToolCalls: 160,
-    difficulty: 'easy',
-    allowedTools: ['browser'],
-    objective: {
-      kind: 'chess_move',
-      targetMove: 'e2e4',
-    },
-    hurdles: [],
-  },
-  {
     id: 'chess-full-match',
     title: 'Chess: Full Model Match',
     version: '0.1.0',
@@ -232,7 +140,6 @@ export const seedTasks: TaskConfig[] = [
       kind: 'chess_match',
       maxPlies: 120,
     },
-    hurdles: [],
   },
 ];
 

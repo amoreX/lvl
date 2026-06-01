@@ -9,13 +9,8 @@
     "dev:web": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "start": "tsx src/server/index.ts",
-    "smoke": "tsx scripts/smoke-test.ts",
     "parser:test": "tsx scripts/test-browser-parser.ts",
-    "chess:verify": "tsx scripts/run-chess-verify.ts",
     "chess:match": "tsx scripts/run-chess-match.ts",
-    "suite:smoke": "tsx scripts/run-multiseed-suite.ts",
-    "benchmark": "tsx scripts/run-benchmark.ts",
-    "benchmark:premium": "tsx scripts/run-premium-benchmark.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

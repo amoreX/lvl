@@ -141,9 +141,7 @@ small {
   background: #fffaf0;
 }
 
-.heroCompose .duo,
-.heroCompose .seedGrid,
-.heroCompose .seedGrid.random {
+.heroCompose .duo {
   grid-template-columns: 1fr;
 }
 
@@ -233,26 +231,6 @@ button:focus-visible {
   width: auto;
 }
 
-.seedGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  align-items: end;
-}
-
-.seedGrid.random {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.seedToggle {
-  min-height: 52px;
-  align-content: center;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 10px;
-  background: #fffaf0;
-}
-
 .fieldHint {
   margin: -6px 0 0;
   color: var(--muted);
@@ -284,6 +262,12 @@ button:disabled {
   background: var(--red);
 }
 
+.secondaryDanger {
+  background: #fffaf0;
+  color: var(--red);
+  border-color: #e0a296;
+}
+
 .analyticsList,
 .timeline {
   display: grid;
@@ -298,10 +282,10 @@ button:disabled {
 .matchTableHead,
 .matchTableRow {
   display: grid;
-  grid-template-columns: minmax(220px, 1.6fr) minmax(110px, 0.8fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr) minmax(120px, 0.7fr) minmax(80px, 0.5fr) minmax(80px, 0.5fr) minmax(120px, 0.8fr);
+  grid-template-columns: minmax(220px, 1.6fr) minmax(110px, 0.8fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr) minmax(120px, 0.7fr) minmax(80px, 0.5fr) minmax(80px, 0.5fr) minmax(82px, 0.45fr);
   gap: 12px;
   align-items: center;
-  min-width: 1080px;
+  min-width: 1160px;
 }
 
 .matchTableHead {
@@ -313,6 +297,7 @@ button:disabled {
 }
 
 .matchTableRow {
+  cursor: pointer;
   text-align: left;
   width: 100%;
   margin-top: 8px;
@@ -322,6 +307,12 @@ button:disabled {
   color: var(--ink);
   border-radius: 18px;
   font-size: 13px;
+}
+
+.matchTableRow:focus-visible {
+  border-color: var(--amber);
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
 }
 
 .matchTableRow.active {
@@ -336,6 +327,15 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.rowDelete {
+  min-height: 34px;
+  padding: 7px 10px;
+  background: #fffaf0;
+  color: var(--red);
+  border-color: #e0a296;
+  font-size: 12px;
 }
 
 .pill {
