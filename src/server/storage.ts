@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type {
   AnalyticsSummary,
   AppState,
@@ -8,31 +9,27 @@ import type {
   RunRecord,
   TraceStep,
 } from '../shared/types.js';
-import { stateFilePath } from './config.js';
+import { databaseFilePath, legacyStateFilePath } from './config.js';
 import { emptyState, seedHarnesses, seedModels, seedTasks } from './seeds.js';
 
 export class JsonStore {
   private state: AppState | null = null;
+  private db: DatabaseSync | null = null;
   private writeQueue = Promise.resolve();
 
   async load(): Promise<AppState> {
     if (this.state) return this.state;
-    const file = stateFilePath();
-    try {
-      const raw = await fs.readFile(file, 'utf8');
-      this.state = this.withSeeds(JSON.parse(raw) as AppState);
-    } catch {
-      this.state = emptyState();
-      await this.save();
-    }
+    await this.open();
+    const stored = this.readSqliteState();
+    this.state = this.withSeeds(stored ?? await this.readLegacyJsonState() ?? emptyState());
+    await this.save();
     return this.state;
   }
 
   async save() {
-    const file = stateFilePath();
-    await fs.mkdir(path.dirname(file), { recursive: true });
+    await this.open();
     this.writeQueue = this.writeQueue.then(async () => {
-      await fs.writeFile(file, JSON.stringify(this.state ?? emptyState(), null, 2), 'utf8');
+      this.writeSqliteState(this.state ?? emptyState());
     });
     await this.writeQueue;
   }
@@ -203,6 +200,94 @@ export class JsonStore {
       })),
       steps: state.steps ?? [],
     };
+  }
+
+  private async open() {
+    if (this.db) return;
+    const file = databaseFilePath();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    this.db = new DatabaseSync(file);
+    this.db.exec(`
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE IF NOT EXISTS models (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS harnesses (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS matches (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, match_id TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS steps (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_index INTEGER NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS idx_runs_match_id ON runs(match_id);
+      CREATE INDEX IF NOT EXISTS idx_steps_run_id ON steps(run_id);
+    `);
+  }
+
+  private readSqliteState(): AppState | null {
+    const db = this.requireDb();
+    const hasRows = ['models', 'harnesses', 'tasks', 'matches', 'runs', 'steps'].some((table) => {
+      const row = db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number };
+      return row.count > 0;
+    });
+    if (!hasRows) return null;
+    return {
+      models: readTable(db, 'models'),
+      harnesses: readTable(db, 'harnesses'),
+      tasks: readTable(db, 'tasks'),
+      matches: readTable(db, 'matches'),
+      runs: readTable(db, 'runs'),
+      steps: readTable(db, 'steps'),
+    };
+  }
+
+  private writeSqliteState(state: AppState) {
+    const db = this.requireDb();
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const table of ['models', 'harnesses', 'tasks', 'matches', 'runs', 'steps']) {
+        db.prepare(`DELETE FROM ${table}`).run();
+      }
+      writeTable(db, 'models', state.models);
+      writeTable(db, 'harnesses', state.harnesses);
+      writeTable(db, 'tasks', state.tasks);
+      writeTable(db, 'matches', state.matches);
+      writeTable(db, 'runs', state.runs, (run) => ({ match_id: run.matchId }));
+      writeTable(db, 'steps', state.steps, (step) => ({ run_id: step.runId, step_index: step.stepIndex }));
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  private async readLegacyJsonState(): Promise<AppState | null> {
+    try {
+      const raw = await fs.readFile(legacyStateFilePath(), 'utf8');
+      return JSON.parse(raw) as AppState;
+    } catch {
+      return null;
+    }
+  }
+
+  private requireDb() {
+    if (!this.db) throw new Error('SQLite store is not open.');
+    return this.db;
+  }
+}
+
+function readTable<T>(db: DatabaseSync, table: string): T[] {
+  return (db.prepare(`SELECT data FROM ${table}`).all() as Array<{ data: string }>).map((row) => JSON.parse(row.data) as T);
+}
+
+function writeTable<T extends { id: string }>(
+  db: DatabaseSync,
+  table: string,
+  values: T[],
+  extra?: (value: T) => Record<string, string | number>,
+) {
+  const columns = ['id', ...(values[0] && extra ? Object.keys(extra(values[0])) : []), 'data'];
+  const placeholders = columns.map(() => '?').join(', ');
+  const statement = db.prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`);
+  for (const value of values) {
+    const extraValues = extra ? Object.values(extra(value)) : [];
+    statement.run(value.id, ...extraValues, JSON.stringify(value));
   }
 }
 

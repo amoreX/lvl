@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import dotenv from 'dotenv';
 import type { MatchDetail } from '../src/shared/types.js';
 import { MatchOrchestrator } from '../src/server/orchestrator.js';
-import { stateFilePath } from '../src/server/config.js';
+import { databaseFilePath, legacyStateFilePath } from '../src/server/config.js';
 import { JsonStore } from '../src/server/storage.js';
 
 dotenv.config({ path: '.env.local' });
@@ -17,7 +17,8 @@ const maxPlies = Number(process.env.CHESS_MAX_PLIES || 16);
 
 async function main() {
   if (process.env.CHESS_RESET_STATE === 'true') {
-    await fs.rm(stateFilePath(), { force: true });
+    await fs.rm(databaseFilePath(), { force: true });
+    await fs.rm(legacyStateFilePath(), { force: true });
   }
   if (process.env.CHESS_RESET_ARTIFACTS === 'true') {
     await fs.rm('./artifacts', { recursive: true, force: true });

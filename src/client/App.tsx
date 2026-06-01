@@ -273,7 +273,7 @@ function MatchList({
     <div className="matchTable">
       <div className="matchTableHead">
         <span>Match</span>
-        <span>Winner</span>
+        <span>Score</span>
         <span>Model 1</span>
         <span>Model 2</span>
         <span>Started</span>
@@ -290,7 +290,7 @@ function MatchList({
         return (
           <div key={match.id} className={`matchTableRow ${selected === match.id ? 'active' : ''}`} role="button" tabIndex={0} onClick={() => onSelect(match.id)} onKeyDown={(event) => event.key === 'Enter' && onSelect(match.id)}>
             <strong>{displayMatchName(match.name)}</strong>
-            <span>{shortModelName(winnerName(match, matchRuns, models))}</span>
+            <span>{scoreboardLabel(match, matchRuns, models)}</span>
             <span>{agentAName}</span>
             <span>{agentBName}</span>
             <span>{formatDateTime(match.startedAt ?? match.createdAt)}</span>
@@ -328,7 +328,6 @@ function MatchModal({ detail, onClose, onCancel, onDelete }: { detail: MatchDeta
 function MatchReplay({ detail, onCancel, onDelete, onClose }: { detail: MatchDetail; onCancel: () => Promise<void>; onDelete: () => Promise<void>; onClose: () => void }) {
   const [filter, setFilter] = useState<RunFilter>('all');
   const [gameFilter, setGameFilter] = useState<GameFilter>('all');
-  const games = gameSummaries(detail.runs);
 
   return (
     <div>
@@ -337,7 +336,7 @@ function MatchReplay({ detail, onCancel, onDelete, onClose }: { detail: MatchDet
           <h2>{displayMatchName(detail.match.name)}</h2>
           <p className="muted">
             {detail.match.status === 'running' ? 'Live replay updating automatically · ' : ''}
-            {detail.task.title} · {memoryLabel(detail.match.memoryMode)} · winner: {shortModelName(winnerName(detail.match, detail.runs, detail.runs.map((run) => run.model).filter(Boolean) as ModelConfig[]))} · duration {durationLabel(detail.match)} · spent {costLabel(detail.runs)} ·{' '}
+            {detail.task.title} · {memoryLabel(detail.match.memoryMode)} · score: {scoreboardLabel(detail.match, detail.runs, detail.runs.map((run) => run.model).filter(Boolean) as ModelConfig[])} · duration {durationLabel(detail.match)} · spent {costLabel(detail.runs)} ·{' '}
             <a href={`/task-pages/${detail.task.id}?matchId=${detail.match.id}&game=${gameFilter === 'all' ? 1 : gameFilter}`} target="_blank" rel="noreferrer">open replay board</a>
             {' · '}
             <a href={`/api/matches/${detail.match.id}/pgn`} target="_blank" rel="noreferrer">download PGN</a>
@@ -352,23 +351,7 @@ function MatchReplay({ detail, onCancel, onDelete, onClose }: { detail: MatchDet
         </div>
       </div>
 
-      <div className="runFilter">
-        <button className={gameFilter === 'all' ? 'active' : ''} onClick={() => setGameFilter('all')}>Both games</button>
-        {games.map((game) => (
-          <button key={game.gameIndex} className={gameFilter === game.gameIndex ? 'active' : ''} onClick={() => setGameFilter(game.gameIndex)}>
-            Game {game.gameIndex}: {shortModelName(game.white)} white
-          </button>
-        ))}
-      </div>
-
-      <div className="gameSummary">
-        {games.map((game) => (
-          <div key={game.gameIndex}>
-            <strong>Game {game.gameIndex}</strong>
-            <span>{shortModelName(game.white)} as White vs {shortModelName(game.black)} as Black</span>
-          </div>
-        ))}
-      </div>
+      <PairedScoreboard detail={detail} activeGame={gameFilter} onGameChange={setGameFilter} />
 
       <div className="runFilter">
         <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All logs</button>
@@ -378,6 +361,43 @@ function MatchReplay({ detail, onCancel, onDelete, onClose }: { detail: MatchDet
 
       <MatchLog detail={detail} filter={filter} gameFilter={gameFilter} />
     </div>
+  );
+}
+
+function PairedScoreboard({ detail, activeGame, onGameChange }: { detail: MatchDetail; activeGame: GameFilter; onGameChange: (game: GameFilter) => void }) {
+  const models = detail.runs.map((run) => run.model).filter(Boolean) as ModelConfig[];
+  const score = pairedScore(detail.runs);
+  const model1 = shortModelName(modelNameForRole(detail.runs, 'agentA'));
+  const model2 = shortModelName(modelNameForRole(detail.runs, 'agentB'));
+  const games = gameSummaries(detail.runs);
+  return (
+    <section className="scoreboard">
+      <div className="scoreboardTop">
+        <span>{model1}</span>
+        <strong>{formatPoints(score.agentA)} - {formatPoints(score.agentB)}</strong>
+        <span>{model2}</span>
+      </div>
+      <div className="runFilter compactFilter">
+        <button className={activeGame === 'all' ? 'active' : ''} onClick={() => onGameChange('all')}>Both games</button>
+        {games.map((game) => (
+          <button key={game.gameIndex} className={activeGame === game.gameIndex ? 'active' : ''} onClick={() => onGameChange(game.gameIndex)}>
+            Game {game.gameIndex}: {shortModelName(game.white)} white
+          </button>
+        ))}
+      </div>
+      <div className="gameSummary">
+        {games.map((game) => {
+          const runs = detail.runs.filter((run) => (run.gameIndex ?? 1) === game.gameIndex);
+          return (
+            <a key={game.gameIndex} href={`/api/matches/${detail.match.id}/pgn?game=${game.gameIndex}`} target="_blank" rel="noreferrer">
+              <strong>Game {game.gameIndex}: {gameResultLabel(runs, models)}</strong>
+              <span>{shortModelName(game.white)} as White vs {shortModelName(game.black)} as Black</span>
+              <small>quality {avgQualityLabel(runs)} · illegal {illegalAttemptCount(runs)} · PGN</small>
+            </a>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -571,6 +591,33 @@ function costLabel(runs: Pick<RunRecord, 'costUsd'>[]) {
   return `$${total.toFixed(2)}`;
 }
 
+function pairedScore(runs: RunRecord[]) {
+  return runs.reduce((score, run) => {
+    score[run.role] += runPoints(run);
+    return score;
+  }, { agentA: 0, agentB: 0 } satisfies Record<RunRecord['role'], number>);
+}
+
+function scoreboardLabel(match: Pick<MatchRecord, 'status'>, runs: RunRecord[], models: ModelConfig[]) {
+  if (match.status === 'running' || match.status === 'queued') return match.status;
+  if (match.status === 'cancelled' || match.status === 'failed') return match.status;
+  const score = pairedScore(runs);
+  const model1 = shortModelName(models.find((model) => model.id === runs.find((run) => run.role === 'agentA')?.modelId)?.name ?? runs.find((run) => run.role === 'agentA')?.modelId ?? 'Model 1');
+  const model2 = shortModelName(models.find((model) => model.id === runs.find((run) => run.role === 'agentB')?.modelId)?.name ?? runs.find((run) => run.role === 'agentB')?.modelId ?? 'Model 2');
+  return `${model1} ${formatPoints(score.agentA)} - ${formatPoints(score.agentB)} ${model2}`;
+}
+
+function runPoints(run: RunRecord) {
+  const success = run.scorecard?.taskSuccess;
+  if (success === 100) return 1;
+  if (success === 50) return 0.5;
+  return 0;
+}
+
+function formatPoints(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
 function gameSummaries(runs: Array<RunRecord & { model?: ModelConfig }>) {
   const indices = [...new Set(runs.map((run) => run.gameIndex ?? 1))].sort((a, b) => a - b);
   return indices.map((gameIndex) => {
@@ -583,17 +630,29 @@ function gameSummaries(runs: Array<RunRecord & { model?: ModelConfig }>) {
   });
 }
 
+function gameResultLabel(runs: RunRecord[], models: ModelConfig[]) {
+  const white = runs.find((run) => run.color === 'w');
+  const black = runs.find((run) => run.color === 'b');
+  if (white?.scorecard?.taskSuccess === 100) return `${shortModelName(models.find((model) => model.id === white.modelId)?.name ?? white.modelId)} won`;
+  if (black?.scorecard?.taskSuccess === 100) return `${shortModelName(models.find((model) => model.id === black.modelId)?.name ?? black.modelId)} won`;
+  if (white?.scorecard?.taskSuccess === 50 || black?.scorecard?.taskSuccess === 50) return 'Draw';
+  if (runs.some((run) => run.status === 'running' || run.status === 'waiting_for_model' || run.status === 'executing_tool')) return 'Running';
+  return 'Pending';
+}
+
+function avgQualityLabel(runs: RunRecord[]) {
+  const values = runs.map((run) => run.scorecard?.chessQuality).filter((value): value is number => typeof value === 'number');
+  if (!values.length) return '-';
+  return `${Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)}`;
+}
+
+function illegalAttemptCount(runs: Array<RunRecord & { steps?: MatchDetail['runs'][number]['steps'] }>) {
+  return runs.reduce((total, run) => total + (run.steps ?? []).flatMap((step) => step.scoreEvents).filter((event) => /illegal|No complete/i.test(event.reason)).length, 0);
+}
+
 function modelNameForRole(runs: Array<RunRecord & { model?: ModelConfig }>, role: RunRecord['role']) {
   const run = runs.find((item) => item.role === role);
   return run?.model?.name ?? run?.modelId ?? (role === 'agentA' ? 'Model 1' : 'Model 2');
-}
-
-function winnerName(match: Pick<MatchRecord, 'winnerRunId' | 'status'>, runs: RunRecord[], models: ModelConfig[]) {
-  if (match.status === 'running' || match.status === 'queued') return match.status;
-  if (match.status === 'cancelled' || match.status === 'failed') return match.status;
-  if (!match.winnerRunId) return 'draw / none';
-  const run = runs.find((item) => item.id === match.winnerRunId);
-  return models.find((model) => model.id === run?.modelId)?.name ?? run?.modelId ?? 'unknown';
 }
 
 function shortModelName(value: string) {

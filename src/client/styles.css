@@ -433,6 +433,36 @@ button:disabled {
   color: #fff8ed;
 }
 
+.scoreboard {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 12px;
+  background: #fffaf0;
+}
+
+.scoreboardTop {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.scoreboardTop strong {
+  font-size: clamp(24px, 4vw, 40px);
+  font-variant-numeric: tabular-nums;
+}
+
+.scoreboardTop span:last-child {
+  text-align: right;
+}
+
+.compactFilter {
+  margin: 0;
+}
+
 .gameSummary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -440,16 +470,19 @@ button:disabled {
   margin: 0 0 16px;
 }
 
-.gameSummary div {
+.gameSummary a {
   display: grid;
   gap: 4px;
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 10px 12px;
   background: #fffaf0;
+  color: var(--ink);
+  text-decoration: none;
 }
 
-.gameSummary span {
+.gameSummary span,
+.gameSummary small {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;

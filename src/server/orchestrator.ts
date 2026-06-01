@@ -5,6 +5,7 @@ import { ChromiumGameEnvironment } from './chromiumEnvironment.js';
 import { config } from './config.js';
 import { ContextCompactionTracker } from './contextCompaction.js';
 import { BarebonesHarness } from './harness.js';
+import { evaluateMoveWithStockfish } from './stockfish.js';
 import type { JsonStore } from './storage.js';
 
 type Job = { matchId: string; run: () => Promise<void> };
@@ -244,7 +245,7 @@ export class MatchOrchestrator {
             await env.applyChessState(chessState(chess, `${reason} ${chessStatus(chess)}`));
           } else {
             legalMovePlayed = true;
-            const moveQuality = analyzeMoveQuality(beforeFen, chess, move, color);
+            const moveQuality = await analyzeMoveQuality(beforeFen, chess, move, color);
             quality[color].total += moveQuality.score;
             quality[color].moves += 1;
             if (moveQuality.label === 'blunder') quality[color].blunders += 1;
@@ -568,12 +569,14 @@ function roundScore(value: number, digits = 2) {
   return Number(value.toFixed(digits));
 }
 
-function analyzeMoveQuality(
+async function analyzeMoveQuality(
   beforeFen: string,
   afterChess: Chess,
   move: { san: string; captured?: PieceSymbol; piece: PieceSymbol; to: string },
   color: Color,
 ) {
+  const engineQuality = await evaluateMoveWithStockfish(beforeFen, afterChess.fen());
+  if (engineQuality) return engineQuality;
   const before = new Chess(beforeFen);
   const materialDelta = (materialBalance(afterChess) - materialBalance(before)) * (color === 'w' ? 1 : -1);
   const captureBonus = move.captured ? pieceValue(move.captured) * 4 : 0;
@@ -588,7 +591,7 @@ function analyzeMoveQuality(
     checkBonus ? 'check pressure' : '',
     replyPenalty ? 'moved piece can be captured' : '',
   ].filter(Boolean).join(', ');
-  return { score, label, reason };
+  return { score, label, reason: `heuristic fallback, ${reason}`, source: 'heuristic' as const };
 }
 
 function opponentCanCaptureMovedPiece(chess: Chess, square: string, mover: Color) {

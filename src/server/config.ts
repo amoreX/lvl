@@ -6,7 +6,7 @@ dotenv.config();
 
 export const config = {
   port: Number(process.env.PORT || 4321),
-  databaseUrl: process.env.DATABASE_URL || 'file:./data/lvl-state.json',
+  databaseUrl: process.env.DATABASE_URL || 'file:./data/lvl-state.sqlite',
   artifactDir: process.env.ARTIFACT_DIR || './artifacts',
   workerConcurrency: Number(process.env.MATCH_WORKER_CONCURRENCY || 2),
   defaultTimeoutMs: Number(process.env.MATCH_DEFAULT_TIMEOUT_MS || 300_000),
@@ -17,6 +17,9 @@ export const config = {
   contextWindowTokens: Number(process.env.CONTEXT_WINDOW_TOKENS || 200_000),
   contextCompactionTriggerRatio: Number(process.env.CONTEXT_COMPACTION_TRIGGER_RATIO || 0.70),
   contextCompactionCooldownMs: Number(process.env.CONTEXT_COMPACTION_COOLDOWN_MS || 30_000),
+  stockfishPath: process.env.STOCKFISH_PATH || 'stockfish',
+  stockfishDepth: Number(process.env.STOCKFISH_DEPTH || 8),
+  stockfishTimeoutMs: Number(process.env.STOCKFISH_TIMEOUT_MS || 2500),
   openRouterApiKey: process.env.OPENROUTER_API_KEY || '',
   openRouterModel: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
   openRouterSiteUrl: process.env.OPENROUTER_SITE_URL || 'http://localhost:5173',
@@ -27,8 +30,21 @@ export const config = {
 };
 
 export function stateFilePath() {
+  return databaseFilePath();
+}
+
+export function databaseFilePath() {
   if (config.databaseUrl.startsWith('file:')) {
-    return path.resolve(config.databaseUrl.slice('file:'.length));
+    const filePath = path.resolve(config.databaseUrl.slice('file:'.length));
+    return filePath.endsWith('.json') ? filePath.replace(/\.json$/i, '.sqlite') : filePath;
+  }
+  return path.resolve('./data/lvl-state.sqlite');
+}
+
+export function legacyStateFilePath() {
+  if (config.databaseUrl.startsWith('file:')) {
+    const filePath = path.resolve(config.databaseUrl.slice('file:'.length));
+    return filePath.endsWith('.json') ? filePath : filePath.replace(/\.sqlite$/i, '.json');
   }
   return path.resolve('./data/lvl-state.json');
 }
