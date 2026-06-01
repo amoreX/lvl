@@ -11,7 +11,8 @@ Core loop:
 ```text
 Create chess match
   -> run model through harness
-  -> execute browser tool on Chromium chess board
+  -> run two games in parallel so each agent plays White once
+  -> execute browser tool on Chromium chess boards
   -> validate move with chess.js
   -> record trace
   -> score chess result
@@ -50,8 +51,7 @@ PROJECT_STATUS.md            Current state and roadmap
 ## Current Product Rules
 
 - Only `chess-full-match` should be available as a task.
-- Agent A is White.
-- Agent B is Black.
+- Every created match should contain two games: Game 1 Model 1 White / Model 2 Black, Game 2 Model 2 White / Model 1 Black.
 - Chess is always turn-based/sequential.
 - Do not show run mode in the UI.
 - Do not show task selection in the UI.
@@ -59,6 +59,7 @@ PROJECT_STATUS.md            Current state and roadmap
 - Keep runtime seed/randomness backend-owned. It can support replay/environment randomness and future hurdles, but should not reappear as a normal match-creation choice.
 - Do not show non-chess games in docs, scripts, seeds, or runtime code.
 - Keep the normal replay focused on model actions, score events, output, and board moves.
+- Keep PGN export available through `GET /api/matches/:id/pgn`; `?game=1` or `?game=2` may narrow it to one game.
 - Deleting a match log should remove the match, both runs, and their trace steps; if it is active, cancel it first.
 - Do not show screenshot banners or huge element-tree dumps by default.
 
@@ -104,11 +105,12 @@ GET  /api/bootstrap
 GET  /api/matches
 GET  /api/matches/:id
 GET  /api/matches/:id/replay
+GET  /api/matches/:id/pgn
 POST /api/matches
 POST /api/matches/:id/cancel
 DELETE /api/matches/:id
 GET  /api/analytics
-GET  /task-pages/chess-full-match?matchId=<matchId>
+GET  /task-pages/chess-full-match?matchId=<matchId>&game=1
 ```
 
 ## Browser Tool Contract
@@ -136,6 +138,7 @@ They should remain explainable from:
 
 - Game result.
 - Material balance.
+- Heuristic chess quality (`chessQuality`) for captures, checks, material swing, and obvious hanging-piece risk.
 - Illegal/incomplete move counts.
 - Step/tool efficiency.
 - Cost and latency metadata.
