@@ -177,17 +177,33 @@ function MatchForm({
 }) {
   const defaultHarness = harnesses[0]?.id ?? 'ghost-barebones';
   const defaultTask = tasks.find((task) => task.id === 'chess-full-match') ?? tasks[0];
+  const selectableModels = models.filter((model) => model.provider === 'openrouter');
   const [form, setForm] = useState<CreateMatchInput>({
     name: defaultTask?.title ?? 'Chess full match',
     taskId: defaultTask?.id ?? '',
-    agentA: { modelId: models[0]?.id ?? '', harnessId: defaultHarness },
-    agentB: { modelId: models[1]?.id ?? models[0]?.id ?? '', harnessId: defaultHarness },
+    agentA: { modelId: selectableModels[0]?.id ?? '', harnessId: defaultHarness },
+    agentB: { modelId: selectableModels[1]?.id ?? selectableModels[0]?.id ?? '', harnessId: defaultHarness },
     memoryMode: 'fresh',
     runMode: 'sequential',
     maxSteps: defaultTask?.maxSteps ?? 10,
     maxToolCalls: defaultTask?.maxToolCalls ?? 30,
   });
   const [submitting, setSubmitting] = useState(false);
+  const [starredModelIds, setStarredModelIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem('lvl.starredModels') ?? '[]') as string[];
+    } catch {
+      return [];
+    }
+  });
+
+  function toggleStarredModel(modelId: string) {
+    setStarredModelIds((current) => {
+      const next = current.includes(modelId) ? current.filter((id) => id !== modelId) : [modelId, ...current];
+      window.localStorage.setItem('lvl.starredModels', JSON.stringify(next));
+      return next;
+    });
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -212,8 +228,22 @@ function MatchForm({
         <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
       </label>
       <div className="duo">
-        <AgentSelect label="Model 1" models={models} value={form.agentA} onChange={(agentA) => setForm({ ...form, agentA: { ...agentA, harnessId: defaultHarness } })} />
-        <AgentSelect label="Model 2" models={models} value={form.agentB} onChange={(agentB) => setForm({ ...form, agentB: { ...agentB, harnessId: defaultHarness } })} />
+        <ModelSearch
+          label="Model 1"
+          models={selectableModels}
+          starredModelIds={starredModelIds}
+          value={form.agentA}
+          onChange={(agentA) => setForm({ ...form, agentA: { ...agentA, harnessId: defaultHarness } })}
+          onToggleStar={toggleStarredModel}
+        />
+        <ModelSearch
+          label="Model 2"
+          models={selectableModels}
+          starredModelIds={starredModelIds}
+          value={form.agentB}
+          onChange={(agentB) => setForm({ ...form, agentB: { ...agentB, harnessId: defaultHarness } })}
+          onToggleStar={toggleStarredModel}
+        />
       </div>
       <label>
         Memory mode
@@ -230,26 +260,116 @@ function MatchForm({
   );
 }
 
-function AgentSelect({
+function ModelSearch({
   label,
   models,
+  starredModelIds,
   value,
   onChange,
+  onToggleStar,
 }: {
   label: string;
   models: ModelConfig[];
+  starredModelIds: string[];
   value: { modelId: string; harnessId: string };
   onChange: (value: { modelId: string; harnessId: string }) => void;
+  onToggleStar: (modelId: string) => void;
 }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const selected = models.find((model) => model.id === value.modelId);
+  const normalized = query.trim().toLowerCase();
+  const starredModels = starredModelIds
+    .map((id) => models.find((model) => model.id === id))
+    .filter((model): model is ModelConfig => Boolean(model));
+  const filteredModels = models
+    .filter((model) => !normalized || `${model.name} ${model.version} ${model.defaultModel ?? ''}`.toLowerCase().includes(normalized))
+    .slice(0, normalized ? 16 : 10);
+  const starredResults = normalized ? starredModels.filter((model) => filteredModels.some((item) => item.id === model.id)) : starredModels;
   return (
-    <fieldset>
+    <fieldset className="modelSearch">
       <legend>{label}</legend>
-      <select value={value.modelId} onChange={(event) => onChange({ ...value, modelId: event.target.value })}>
-        {models.map((model) => (
-          <option key={model.id} value={model.id}>{model.name}{model.enabled ? '' : ' (needs key)'}</option>
-        ))}
-      </select>
+      <button type="button" className="modelSelectButton" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
+        <span>Choose model</span>
+        <strong>{selected ? shortModelName(selected.name) : 'No model selected'}</strong>
+      </button>
+      {open ? (
+        <div className="modelPicker">
+          <input
+            type="search"
+            autoFocus
+            placeholder="Search models..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {starredResults.length ? (
+            <ModelSection
+              title="Starred"
+              models={starredResults}
+              selectedId={value.modelId}
+              starredModelIds={starredModelIds}
+              onToggleStar={onToggleStar}
+              onSelect={(modelId) => {
+                onChange({ ...value, modelId });
+                setQuery('');
+                setOpen(false);
+              }}
+            />
+          ) : (
+            <p className="modelEmpty">{normalized ? 'No starred matches yet.' : 'Star models to pin them here.'}</p>
+          )}
+          <ModelSection
+            title={normalized ? 'Search results' : 'All models'}
+            models={filteredModels}
+            selectedId={value.modelId}
+            starredModelIds={starredModelIds}
+            onToggleStar={onToggleStar}
+            onSelect={(modelId) => {
+              onChange({ ...value, modelId });
+              setQuery('');
+              setOpen(false);
+            }}
+          />
+          {!filteredModels.length ? <p className="modelEmpty">No matching models.</p> : null}
+        </div>
+      ) : null}
     </fieldset>
+  );
+}
+
+function ModelSection({
+  title,
+  models,
+  selectedId,
+  starredModelIds,
+  onSelect,
+  onToggleStar,
+}: {
+  title: string;
+  models: ModelConfig[];
+  selectedId: string;
+  starredModelIds: string[];
+  onSelect: (modelId: string) => void;
+  onToggleStar: (modelId: string) => void;
+}) {
+  if (!models.length) return null;
+  return (
+    <section className="modelSection">
+      <h3>{title}</h3>
+      <div className="modelSearchList">
+        {models.map((model) => (
+          <div key={model.id} className={`modelOption ${model.id === selectedId ? 'active' : ''}`}>
+            <button type="button" className="starButton" aria-label={`${starredModelIds.includes(model.id) ? 'Unstar' : 'Star'} ${shortModelName(model.name)}`} onClick={() => onToggleStar(model.id)}>
+              {starredModelIds.includes(model.id) ? '★' : '☆'}
+            </button>
+            <button type="button" className="modelOptionMain" onClick={() => onSelect(model.id)}>
+              <strong>{shortModelName(model.name)}</strong>
+              <span>{model.defaultModel ?? model.version}{model.enabled ? '' : ' · needs key'}</span>
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

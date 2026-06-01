@@ -82,6 +82,17 @@ export class MatchOrchestrator {
     return this.store.deleteMatch(matchId);
   }
 
+  shutdown() {
+    for (const job of this.queue) {
+      this.cancelled.add(job.matchId);
+    }
+    this.queue = [];
+    for (const [matchId, controller] of this.abortControllers) {
+      this.cancelled.add(matchId);
+      controller.abort(new Error('Server shutting down.'));
+    }
+  }
+
   enqueueMatch(matchId: string) {
     this.queue.push({ matchId, run: async () => this.runMatch(matchId) });
     this.pump();

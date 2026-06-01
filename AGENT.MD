@@ -38,7 +38,7 @@ src/server/index.ts          Express API
 src/server/orchestrator.ts   Chess match runner, cancellation, scoring
 src/server/stockfish.ts      Optional Stockfish UCI evaluator
 src/server/chromiumEnvironment.ts  Chess board runtime and replay page
-src/server/modelAdapters.ts  Dummy/OpenRouter model adapters
+src/server/modelAdapters.ts  OpenRouter adapter and internal test adapters
 src/server/browserActionParser.ts Browser action parser
 src/server/contextCompaction.ts Context dump compaction tracker
 src/server/storage.ts        SQLite storage and analytics
@@ -56,6 +56,7 @@ PROJECT_STATUS.md            Current state and roadmap
 - Chess is always turn-based/sequential.
 - Do not show run mode in the UI.
 - Do not show task selection in the UI.
+- Do not show dummy/local test models in the UI; New Match should use actual OpenRouter models only.
 - Do not show seed controls in the UI; match randomness is assigned internally when a match starts.
 - Keep runtime seed/randomness backend-owned. It can support replay/environment randomness and future hurdles, but should not reappear as a normal match-creation choice.
 - Do not show non-chess games in docs, scripts, seeds, or runtime code.

@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n api,web -c amber,cyan \"npm:dev:api\" \"npm:dev:web\"",
-    "dev:api": "tsx watch src/server/index.ts",
-    "dev:web": "vite --host 0.0.0.0",
+    "dev:api": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx watch src/server/index.ts",
+    "dev:web": "tsx scripts/wait-for-api.ts && vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
-    "start": "tsx src/server/index.ts",
+    "start": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/server/index.ts",
     "parser:test": "tsx scripts/test-browser-parser.ts",
-    "chess:match": "tsx scripts/run-chess-match.ts",
+    "chess:match": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx scripts/run-chess-match.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

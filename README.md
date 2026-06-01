@@ -27,7 +27,7 @@ Create chess match -> Run both models through the harness -> Execute moves on Ch
 - Trace modal with aggregate scoreboard, per-game result cards, quality average, illegal count, PGN links, and game/model filters.
 - Chess replay board with game selector, `Start`, `Latest`, slider, arrow-key stepping, live polling, PGN link, and scrollable move log.
 - PGN export for full paired matches or one game at a time.
-- OpenRouter and dummy model adapters.
+- Searchable OpenRouter model picker in the match form.
 
 ## Run Locally
 

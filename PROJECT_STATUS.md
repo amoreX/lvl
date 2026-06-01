@@ -35,7 +35,7 @@ npm run chess:match
 ### UI
 
 - Hero with embedded `lvl` logo and compact chess-only match form.
-- Model selectors for Model 1 and Model 2.
+- Searchable OpenRouter-only model selectors for Model 1 and Model 2.
 - `Memory mode` selector:
   - `Fresh state`
   - `Context dump`

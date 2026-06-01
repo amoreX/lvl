@@ -153,9 +153,29 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 
 await store.load();
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log(`lvl API listening on http://localhost:${config.port}`);
 });
+
+let shuttingDown = false;
+
+async function shutdown(signal: NodeJS.Signals) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`lvl API received ${signal}; shutting down...`);
+  orchestrator.shutdown();
+  const forceExit = setTimeout(() => {
+    console.error('lvl API shutdown timed out; forcing exit.');
+    process.exit(1);
+  }, 5000);
+  forceExit.unref();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await store.close();
+  process.exit(0);
+}
+
+process.once('SIGINT', (signal) => void shutdown(signal));
+process.once('SIGTERM', (signal) => void shutdown(signal));
 
 function chessReplay(detail: MatchDetail, gameIndex = 1) {
   const chess = new Chess();

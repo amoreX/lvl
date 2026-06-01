@@ -33,7 +33,7 @@ export class DummyModelAdapter implements ModelAdapter {
 export class OpenRouterAdapter implements ModelAdapter {
   async call(model: ModelConfig, input: ModelInput): Promise<ModelOutput> {
     if (!config.openRouterApiKey) {
-      throw new Error('OPENROUTER_API_KEY is not configured. Use dummy agents or add the key to .env.local.');
+      throw new Error('OPENROUTER_API_KEY is not configured. Add the key to .env.local before running real model matches.');
     }
     const started = Date.now();
     const controller = new AbortController();

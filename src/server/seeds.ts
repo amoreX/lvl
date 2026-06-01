@@ -7,22 +7,6 @@ function hash(value: string) {
 
 export const seedModels: ModelConfig[] = [
   {
-    id: 'dummy-strong',
-    provider: 'dummy',
-    name: 'Dummy Strong',
-    version: '0.1.0',
-    description: 'Deterministic local chess agent that reads the board and plays a simple legal-looking opening plan.',
-    enabled: true,
-  },
-  {
-    id: 'dummy-chaotic',
-    provider: 'dummy',
-    name: 'Dummy Chaotic',
-    version: '0.1.0',
-    description: 'Local chess baseline that intentionally makes noisier move choices.',
-    enabled: true,
-  },
-  {
     id: 'openrouter-default',
     provider: 'openrouter',
     name: 'OpenRouter Default',

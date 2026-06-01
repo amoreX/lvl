@@ -184,9 +184,18 @@ export class JsonStore {
     return state.matches.find((match) => match.id === matchId) ?? null;
   }
 
+  async close() {
+    await this.writeQueue;
+    this.db?.close();
+    this.db = null;
+  }
+
   private withSeeds(state: AppState): AppState {
     return {
-      models: mergeById(state.models, seedModels),
+      models: mergeById(
+        (state.models ?? []).filter((model) => seedModels.some((seed) => seed.id === model.id)),
+        seedModels,
+      ),
       harnesses: mergeById(state.harnesses, seedHarnesses),
       tasks: seedTasks,
       matches: (state.matches ?? []).map((match) => ({
@@ -206,18 +215,36 @@ export class JsonStore {
     if (this.db) return;
     const file = databaseFilePath();
     await fs.mkdir(path.dirname(file), { recursive: true });
-    this.db = new DatabaseSync(file);
-    this.db.exec(`
-      PRAGMA journal_mode = WAL;
-      CREATE TABLE IF NOT EXISTS models (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS harnesses (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS matches (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, match_id TEXT NOT NULL, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS steps (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_index INTEGER NOT NULL, data TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS idx_runs_match_id ON runs(match_id);
-      CREATE INDEX IF NOT EXISTS idx_steps_run_id ON steps(run_id);
-    `);
+    try {
+      this.db = this.openDatabase(file);
+    } catch (error) {
+      if (!isNotDatabaseError(error)) throw error;
+      this.db?.close();
+      this.db = null;
+      await quarantineInvalidDatabase(file);
+      this.db = this.openDatabase(file);
+    }
+  }
+
+  private openDatabase(file: string) {
+    const db = new DatabaseSync(file);
+    try {
+      db.exec(`
+        PRAGMA journal_mode = WAL;
+        CREATE TABLE IF NOT EXISTS models (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS harnesses (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS matches (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, match_id TEXT NOT NULL, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS steps (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_index INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_runs_match_id ON runs(match_id);
+        CREATE INDEX IF NOT EXISTS idx_steps_run_id ON steps(run_id);
+      `);
+      return db;
+    } catch (error) {
+      db.close();
+      throw error;
+    }
   }
 
   private readSqliteState(): AppState | null {
@@ -288,6 +315,19 @@ function writeTable<T extends { id: string }>(
   for (const value of values) {
     const extraValues = extra ? Object.values(extra(value)) : [];
     statement.run(value.id, ...extraValues, JSON.stringify(value));
+  }
+}
+
+function isNotDatabaseError(error: unknown) {
+  return error instanceof Error && /file is not a database/i.test(error.message);
+}
+
+async function quarantineInvalidDatabase(file: string) {
+  try {
+    await fs.rename(file, `${file}.invalid-${Date.now()}`);
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code !== 'ENOENT') throw error;
   }
 }
 
