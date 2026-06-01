@@ -107,6 +107,8 @@ export type RunRecord = {
   id: string;
   matchId: string;
   role: 'agentA' | 'agentB';
+  gameIndex: number;
+  color: 'w' | 'b';
   modelId: string;
   harnessId: string;
   taskId: string;
@@ -208,6 +210,7 @@ export type ScorecardBreakdown = {
   efficiency: number;
   robustness: number;
   progress: number;
+  chessQuality: number;
   toolUseQuality: number;
   consistency: number | null;
 };

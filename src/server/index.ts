@@ -63,7 +63,22 @@ app.get('/api/matches/:id/replay', async (req, res, next) => {
       res.status(404).json({ error: 'match not found' });
       return;
     }
-    res.json(chessReplay(detail));
+    const gameIndex = Number(req.query.game || 1);
+    res.json(chessReplay(detail, gameIndex));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/matches/:id/pgn', async (req, res, next) => {
+  try {
+    const detail = await store.matchDetail(req.params.id);
+    if (!detail) {
+      res.status(404).send('match not found');
+      return;
+    }
+    const gameIndex = req.query.game ? Number(req.query.game) : undefined;
+    res.type('text/plain').send(matchPgn(detail, gameIndex));
   } catch (error) {
     next(error);
   }
@@ -142,10 +157,12 @@ app.listen(config.port, () => {
   console.log(`lvl API listening on http://localhost:${config.port}`);
 });
 
-function chessReplay(detail: MatchDetail) {
+function chessReplay(detail: MatchDetail, gameIndex = 1) {
   const chess = new Chess();
-  const runsById = new Map(detail.runs.map((run) => [run.id, run]));
+  const gameRuns = detail.runs.filter((run) => (run.gameIndex ?? 1) === gameIndex);
+  const runsById = new Map(gameRuns.map((run) => [run.id, run]));
   const steps = detail.runs
+    .filter((run) => (run.gameIndex ?? 1) === gameIndex)
     .flatMap((run) => run.steps.map((step) => ({ step, run })))
     .sort((a, b) => a.step.stepIndex - b.step.stepIndex || a.step.createdAt.localeCompare(b.step.createdAt));
   const frames: Array<{
@@ -177,8 +194,8 @@ function chessReplay(detail: MatchDetail) {
   for (const { step, run } of steps) {
     const proposed = proposedChessMove(step);
     const legalMarker = step.scoreEvents.find((event) => event.reason.startsWith('Legal move played:'));
-    const actor = run.role === 'agentA' ? 'Agent A' : 'Agent B';
     const model = shortModelName(run.model?.name ?? run.modelId);
+    const actor = model;
     const messages = step.scoreEvents.map((event) => event.reason);
 
     if (!proposed) {
@@ -234,19 +251,90 @@ function chessReplay(detail: MatchDetail) {
       name: detail.match.name,
       status: detail.match.status,
       winnerRunId: detail.match.winnerRunId ?? null,
+      gameIndex,
     },
+    games: gameSummaries(detail),
     task: {
       id: detail.task.id,
       title: detail.task.title,
     },
-    runs: detail.runs.map((run) => ({
+    runs: gameRuns.map((run) => ({
       id: run.id,
       role: run.role,
+      color: run.color,
+      gameIndex: run.gameIndex,
       modelId: run.modelId,
       modelName: shortModelName(runsById.get(run.id)?.model?.name ?? run.modelId),
     })),
+    pgn: gamePgn(detail, gameIndex),
     frames,
   };
+}
+
+function matchPgn(detail: MatchDetail, gameIndex?: number) {
+  const games = gameIndex ? [gameIndex] : gameIndices(detail);
+  return games.map((index) => gamePgn(detail, index)).filter(Boolean).join('\n\n');
+}
+
+function gamePgn(detail: MatchDetail, gameIndex: number) {
+  const chess = new Chess();
+  const gameRuns = detail.runs.filter((run) => (run.gameIndex ?? 1) === gameIndex);
+  const white = gameRuns.find((run) => run.color === 'w');
+  const black = gameRuns.find((run) => run.color === 'b');
+  const steps = gameRuns
+    .flatMap((run) => run.steps.map((step) => ({ step, run })))
+    .sort((a, b) => a.step.stepIndex - b.step.stepIndex || a.step.createdAt.localeCompare(b.step.createdAt));
+  for (const { step } of steps) {
+    const proposed = proposedChessMove(step);
+    const legalMarker = step.scoreEvents.find((event) => event.reason.startsWith('Legal move played:'));
+    if (!proposed || !legalMarker) continue;
+    try {
+      chess.move({ from: proposed.from as Square, to: proposed.to as Square, promotion: proposed.promotion || 'q' });
+    } catch {
+      // Illegal attempts are represented in trace logs, not PGN moves.
+    }
+  }
+  const result = pgnResult(chess, detail, gameIndex);
+  const headers = [
+    ['Event', 'lvl paired chess match'],
+    ['Site', 'lvl local'],
+    ['Date', pgnDate(detail.match.startedAt ?? detail.match.createdAt)],
+    ['Round', String(gameIndex)],
+    ['White', shortModelName(white?.model?.name ?? white?.modelId ?? 'White')],
+    ['Black', shortModelName(black?.model?.name ?? black?.modelId ?? 'Black')],
+    ['Result', result],
+  ];
+  return `${headers.map(([key, value]) => `[${key} "${String(value).replaceAll('"', "'")}"]`).join('\n')}\n\n${chess.pgn()} ${result}`.trim();
+}
+
+function gameSummaries(detail: MatchDetail) {
+  return gameIndices(detail).map((gameIndex) => {
+    const runs = detail.runs.filter((run) => (run.gameIndex ?? 1) === gameIndex);
+    return {
+      gameIndex,
+      white: shortModelName(runs.find((run) => run.color === 'w')?.model?.name ?? 'White'),
+      black: shortModelName(runs.find((run) => run.color === 'b')?.model?.name ?? 'Black'),
+      status: runs.every((run) => run.status === 'completed') ? 'completed' : runs.some((run) => run.status === 'failed') ? 'failed' : detail.match.status,
+    };
+  });
+}
+
+function gameIndices(detail: MatchDetail) {
+  return [...new Set(detail.runs.map((run) => run.gameIndex ?? 1))].sort((a, b) => a - b);
+}
+
+function pgnResult(chess: Chess, detail: MatchDetail, gameIndex: number) {
+  const runs = detail.runs.filter((run) => (run.gameIndex ?? 1) === gameIndex);
+  const white = runs.find((run) => run.color === 'w');
+  const black = runs.find((run) => run.color === 'b');
+  if (white?.scorecard?.taskSuccess === 100) return '1-0';
+  if (black?.scorecard?.taskSuccess === 100) return '0-1';
+  if (chess.isDraw() || white?.scorecard?.taskSuccess === 50 || black?.scorecard?.taskSuccess === 50) return '1/2-1/2';
+  return '*';
+}
+
+function pgnDate(value: string) {
+  return new Date(value).toISOString().slice(0, 10).replaceAll('-', '.');
 }
 
 function proposedChessMove(step: TraceStep) {

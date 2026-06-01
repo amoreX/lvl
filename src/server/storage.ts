@@ -196,7 +196,11 @@ export class JsonStore {
         ...match,
         memoryMode: match.memoryMode ?? 'fresh',
       })),
-      runs: state.runs ?? [],
+      runs: (state.runs ?? []).map((run) => ({
+        ...run,
+        gameIndex: run.gameIndex ?? 1,
+        color: run.color ?? (run.role === 'agentA' ? 'w' : 'b'),
+      })),
       steps: state.steps ?? [],
     };
   }
@@ -227,7 +231,7 @@ function computeModelElo(matches: MatchRecord[], runs: RunRecord[]) {
     const matchRuns = match.runIds.map((id) => byId.get(id)).filter(Boolean) as RunRecord[];
     if (matchRuns.length < 2 || !match.winnerRunId) continue;
     const winner = byId.get(match.winnerRunId);
-    const loser = matchRuns.find((run) => run.id !== match.winnerRunId);
+    const loser = matchRuns.find((run) => run.role !== winner?.role);
     if (!winner || !loser) continue;
     ratings[winner.modelId] ??= 1000;
     ratings[loser.modelId] ??= 1000;

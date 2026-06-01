@@ -433,6 +433,28 @@ button:disabled {
   color: #fff8ed;
 }
 
+.gameSummary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.gameSummary div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 10px 12px;
+  background: #fffaf0;
+}
+
+.gameSummary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .breakdown {
   display: grid;
   gap: 8px;
@@ -480,7 +502,7 @@ button:disabled {
 
 .logLine {
   display: grid;
-  grid-template-columns: 76px minmax(120px, 1fr) 86px minmax(90px, 0.8fr);
+  grid-template-columns: minmax(110px, 1fr) minmax(110px, 0.8fr) 86px minmax(90px, 0.8fr);
   gap: 10px;
   align-items: center;
   font-size: 13px;

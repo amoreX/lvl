@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import dotenv from 'dotenv';
 import type { MatchDetail } from '../src/shared/types.js';
 import { MatchOrchestrator } from '../src/server/orchestrator.js';
+import { stateFilePath } from '../src/server/config.js';
 import { JsonStore } from '../src/server/storage.js';
 
 dotenv.config({ path: '.env.local' });
@@ -15,8 +16,12 @@ const blackModel = process.env.CHESS_BLACK_MODEL || 'openrouter-qwen-9b';
 const maxPlies = Number(process.env.CHESS_MAX_PLIES || 16);
 
 async function main() {
-  await fs.rm('./data/lvl-state.json', { force: true });
-  await fs.rm('./artifacts', { recursive: true, force: true });
+  if (process.env.CHESS_RESET_STATE === 'true') {
+    await fs.rm(stateFilePath(), { force: true });
+  }
+  if (process.env.CHESS_RESET_ARTIFACTS === 'true') {
+    await fs.rm('./artifacts', { recursive: true, force: true });
+  }
   await store.load();
 
   const match = await orchestrator.createMatch({
@@ -60,7 +65,7 @@ function printResult(detail: MatchDetail) {
       .flatMap((step) => step.scoreEvents)
       .filter((event) => event.reason.startsWith('Legal move played:'))
       .map((event) => event.reason.replace('Legal move played: ', '').replace('.', ''));
-    console.log(`${winner}${run.role === 'agentA' ? 'White' : 'Black'} ${run.model?.name ?? run.modelId}: score ${score}, success ${success}, moves [${moves.join(', ')}], steps ${run.stepCount}, cost $${run.costUsd.toFixed(4)}, labels ${labels}`);
+    console.log(`${winner}Game ${run.gameIndex} ${run.color === 'w' ? 'White' : 'Black'} ${run.model?.name ?? run.modelId}: score ${score}, success ${success}, quality ${run.scorecard?.chessQuality ?? 0}, moves [${moves.join(', ')}], steps ${run.stepCount}, cost $${run.costUsd.toFixed(4)}, labels ${labels}`);
   }
 }
 

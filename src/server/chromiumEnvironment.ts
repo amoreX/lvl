@@ -251,7 +251,9 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
   </main>
   <script>
     const seed = ${JSON.stringify(seed)};
-    const matchId = new URLSearchParams(window.location.search).get('matchId');
+    const params = new URLSearchParams(window.location.search);
+    const matchId = params.get('matchId');
+    let gameIndex = Number(params.get('game') || 1);
     const initialBoard = {
       a1: '♖', b1: '♘', c1: '♗', d1: '♕', e1: '♔', f1: '♗', g1: '♘', h1: '♖',
       a2: '♙', b2: '♙', c2: '♙', d2: '♙', e2: '♙', f2: '♙', g2: '♙', h2: '♙',
@@ -289,6 +291,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
         state.fen = next.fen;
         state.turn = next.turn;
         state.moveHistory = next.moveHistory || [];
+        state.chessMove = next.lastMove || (state.moveHistory.length ? state.moveHistory[state.moveHistory.length - 1] : null);
         state.legalMoves = next.legalMoves || [];
         state.gameStatus = next.gameStatus || 'running';
         if (next.confirmed) state.confirmed = true;
@@ -332,12 +335,13 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       const panel = document.getElementById('replay-panel');
       if (panel) panel.hidden = false;
       try {
-        const response = await fetch('/api/matches/' + encodeURIComponent(matchId) + '/replay');
+        const response = await fetch('/api/matches/' + encodeURIComponent(matchId) + '/replay?game=' + encodeURIComponent(String(gameIndex)));
         if (!response.ok) throw new Error('Replay failed to load');
         const data = await response.json();
         const wasAtEnd = replay.currentIndex >= Math.max(0, replay.frames.length - 1);
         replay.frames = data.frames || [];
         replay.status = data.match?.status || 'queued';
+        renderGamePicker(data.games || []);
         if (!keepPosition || wasAtEnd) replay.currentIndex = Math.max(0, replay.frames.length - 1);
         replay.currentIndex = Math.max(0, Math.min(replay.currentIndex, Math.max(0, replay.frames.length - 1)));
         applyReplayFrame();
@@ -355,7 +359,8 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       state.moveHistory = frame.moveHistory || [];
       state.legalMoves = frame.legalMoves || [];
       state.gameStatus = frame.status || replay.status || 'running';
-      state.chessMove = frame.move || 'none';
+      const displayMove = frame.san || frame.move || 'none';
+      state.chessMove = displayMove;
       state.selectedSquare = null;
       render();
       const slider = document.getElementById('replay-slider');
@@ -369,12 +374,27 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       }
       if (counter) counter.textContent = (replay.currentIndex + 1) + ' / ' + Math.max(1, replay.frames.length);
       if (label) label.textContent = frame.label || 'Position';
-      if (meta) meta.textContent = [frame.actor, frame.model, frame.move ? 'move ' + frame.move : '', frame.result].filter(Boolean).join(' · ');
+      if (meta) meta.textContent = [frame.actor, displayMove !== 'none' ? 'move ' + displayMove : '', frame.result].filter(Boolean).join(' · ');
       renderReplayLog();
       if (live) {
         live.textContent = replay.status === 'running' || replay.status === 'queued' ? 'Live match' : 'Final';
         live.className = replay.status === 'running' || replay.status === 'queued' ? 'live-dot' : '';
       }
+    }
+    function renderGamePicker(games) {
+      const picker = document.getElementById('game-picker');
+      const pgn = document.getElementById('pgn-link');
+      if (pgn && matchId) pgn.href = '/api/matches/' + encodeURIComponent(matchId) + '/pgn?game=' + encodeURIComponent(String(gameIndex));
+      if (!picker || picker.dataset.ready === 'true') return;
+      picker.replaceChildren();
+      for (const game of games) {
+        const option = document.createElement('option');
+        option.value = String(game.gameIndex);
+        option.textContent = 'Game ' + game.gameIndex + ': ' + game.white + ' vs ' + game.black;
+        option.selected = Number(game.gameIndex) === gameIndex;
+        picker.appendChild(option);
+      }
+      picker.dataset.ready = 'true';
     }
     function renderReplayLog() {
       const log = document.getElementById('replay-log');
@@ -398,7 +418,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
           applyReplayFrame();
         });
         const actor = document.createElement('strong');
-        actor.textContent = frame.actor || 'Agent';
+        actor.textContent = frame.actor || frame.model || 'Model';
         const move = document.createElement('span');
         move.textContent = [frame.model, frame.san || frame.move || frame.label].filter(Boolean).join(' · ');
         const result = document.createElement('small');
@@ -417,6 +437,7 @@ export function renderTaskPage(task: TaskConfig, seed: number) {
       if (!matchId) return;
       document.getElementById('replay-start')?.addEventListener('click', () => { replay.currentIndex = 0; applyReplayFrame(); });
       document.getElementById('replay-end')?.addEventListener('click', () => { replay.currentIndex = Math.max(0, replay.frames.length - 1); applyReplayFrame(); });
+      document.getElementById('game-picker')?.addEventListener('change', (event) => { gameIndex = Number(event.target.value || 1); replay.frames = []; replay.currentIndex = 0; loadReplay(false); });
       document.getElementById('replay-slider')?.addEventListener('input', (event) => { replay.playing = false; replay.currentIndex = Number(event.target.value); applyReplayFrame(); });
       window.addEventListener('keydown', (event) => {
         if (event.key === 'ArrowLeft') { event.preventDefault(); stepReplay(-1); }
@@ -490,6 +511,8 @@ function renderChess() {
         <div class="replay-head">
           <strong>Match replay</strong>
           <span id="replay-live"></span>
+          <select id="game-picker" aria-label="Replay game"></select>
+          <a id="pgn-link" href="#" download>PGN</a>
         </div>
         <div class="replay-controls">
           <button id="replay-start" type="button">Start</button>
@@ -542,6 +565,7 @@ declare global {
         fen: string;
         turn: 'w' | 'b';
         moveHistory: string[];
+        lastMove?: string | null;
         legalMoves?: string[];
         gameStatus: string;
         confirmed?: boolean;

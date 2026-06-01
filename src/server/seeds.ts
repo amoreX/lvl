@@ -131,7 +131,7 @@ export const seedTasks: TaskConfig[] = [
     title: 'Chess: Full Model Match',
     version: '0.1.0',
     environment: 'chromium_game',
-    instructions: 'Play a legal chess game. White is Agent A and Black is Agent B. On your turn, click the source square, then click the destination square. Promotions default to queen. There is no chess clock flag; thinking time is recorded but not used to forfeit.',
+    instructions: 'Play a legal chess game. Each match runs two games so both agents play White once. On your turn, click the source square, then click the destination square. Promotions default to queen. There is no chess clock flag; thinking time is recorded but not used to forfeit.',
     maxSteps: 120,
     maxToolCalls: 360,
     difficulty: 'medium',

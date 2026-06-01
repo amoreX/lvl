@@ -212,8 +212,8 @@ function MatchForm({
         <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
       </label>
       <div className="duo">
-        <AgentSelect label="Agent A" models={models} value={form.agentA} onChange={(agentA) => setForm({ ...form, agentA: { ...agentA, harnessId: defaultHarness } })} />
-        <AgentSelect label="Agent B" models={models} value={form.agentB} onChange={(agentB) => setForm({ ...form, agentB: { ...agentB, harnessId: defaultHarness } })} />
+        <AgentSelect label="Model 1" models={models} value={form.agentA} onChange={(agentA) => setForm({ ...form, agentA: { ...agentA, harnessId: defaultHarness } })} />
+        <AgentSelect label="Model 2" models={models} value={form.agentB} onChange={(agentB) => setForm({ ...form, agentB: { ...agentB, harnessId: defaultHarness } })} />
       </div>
       <label>
         Memory mode
@@ -285,8 +285,8 @@ function MatchList({
         const matchRuns = runs.filter((run) => run.matchId === match.id);
         const agentA = matchRuns.find((run) => run.role === 'agentA');
         const agentB = matchRuns.find((run) => run.role === 'agentB');
-        const agentAName = shortModelName(models.find((model) => model.id === agentA?.modelId)?.name ?? agentA?.modelId ?? 'Agent A');
-        const agentBName = shortModelName(models.find((model) => model.id === agentB?.modelId)?.name ?? agentB?.modelId ?? 'Agent B');
+        const agentAName = shortModelName(models.find((model) => model.id === agentA?.modelId)?.name ?? agentA?.modelId ?? 'Model 1');
+        const agentBName = shortModelName(models.find((model) => model.id === agentB?.modelId)?.name ?? agentB?.modelId ?? 'Model 2');
         return (
           <div key={match.id} className={`matchTableRow ${selected === match.id ? 'active' : ''}`} role="button" tabIndex={0} onClick={() => onSelect(match.id)} onKeyDown={(event) => event.key === 'Enter' && onSelect(match.id)}>
             <strong>{displayMatchName(match.name)}</strong>
@@ -313,6 +313,7 @@ function MatchList({
 }
 
 type RunFilter = 'all' | 'agentA' | 'agentB';
+type GameFilter = 'all' | number;
 
 function MatchModal({ detail, onClose, onCancel, onDelete }: { detail: MatchDetail; onClose: () => void; onCancel: () => Promise<void>; onDelete: () => Promise<void> }) {
   return (
@@ -326,6 +327,8 @@ function MatchModal({ detail, onClose, onCancel, onDelete }: { detail: MatchDeta
 
 function MatchReplay({ detail, onCancel, onDelete, onClose }: { detail: MatchDetail; onCancel: () => Promise<void>; onDelete: () => Promise<void>; onClose: () => void }) {
   const [filter, setFilter] = useState<RunFilter>('all');
+  const [gameFilter, setGameFilter] = useState<GameFilter>('all');
+  const games = gameSummaries(detail.runs);
 
   return (
     <div>
@@ -335,7 +338,9 @@ function MatchReplay({ detail, onCancel, onDelete, onClose }: { detail: MatchDet
           <p className="muted">
             {detail.match.status === 'running' ? 'Live replay updating automatically · ' : ''}
             {detail.task.title} · {memoryLabel(detail.match.memoryMode)} · winner: {shortModelName(winnerName(detail.match, detail.runs, detail.runs.map((run) => run.model).filter(Boolean) as ModelConfig[]))} · duration {durationLabel(detail.match)} · spent {costLabel(detail.runs)} ·{' '}
-            <a href={`/task-pages/${detail.task.id}?matchId=${detail.match.id}`} target="_blank" rel="noreferrer">open replay board</a>
+            <a href={`/task-pages/${detail.task.id}?matchId=${detail.match.id}&game=${gameFilter === 'all' ? 1 : gameFilter}`} target="_blank" rel="noreferrer">open replay board</a>
+            {' · '}
+            <a href={`/api/matches/${detail.match.id}/pgn`} target="_blank" rel="noreferrer">download PGN</a>
           </p>
         </div>
         <div className="modalActions">
@@ -348,18 +353,38 @@ function MatchReplay({ detail, onCancel, onDelete, onClose }: { detail: MatchDet
       </div>
 
       <div className="runFilter">
-        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All logs</button>
-        <button className={filter === 'agentA' ? 'active' : ''} onClick={() => setFilter('agentA')}>Agent A</button>
-        <button className={filter === 'agentB' ? 'active' : ''} onClick={() => setFilter('agentB')}>Agent B</button>
+        <button className={gameFilter === 'all' ? 'active' : ''} onClick={() => setGameFilter('all')}>Both games</button>
+        {games.map((game) => (
+          <button key={game.gameIndex} className={gameFilter === game.gameIndex ? 'active' : ''} onClick={() => setGameFilter(game.gameIndex)}>
+            Game {game.gameIndex}: {shortModelName(game.white)} white
+          </button>
+        ))}
       </div>
 
-      <MatchLog detail={detail} filter={filter} />
+      <div className="gameSummary">
+        {games.map((game) => (
+          <div key={game.gameIndex}>
+            <strong>Game {game.gameIndex}</strong>
+            <span>{shortModelName(game.white)} as White vs {shortModelName(game.black)} as Black</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="runFilter">
+        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All logs</button>
+        <button className={filter === 'agentA' ? 'active' : ''} onClick={() => setFilter('agentA')}>{shortModelName(modelNameForRole(detail.runs, 'agentA'))}</button>
+        <button className={filter === 'agentB' ? 'active' : ''} onClick={() => setFilter('agentB')}>{shortModelName(modelNameForRole(detail.runs, 'agentB'))}</button>
+      </div>
+
+      <MatchLog detail={detail} filter={filter} gameFilter={gameFilter} />
     </div>
   );
 }
 
-function MatchLog({ detail, filter }: { detail: MatchDetail; filter: RunFilter }) {
-  const runs = filter === 'all' ? detail.runs : detail.runs.filter((run) => run.role === filter);
+function MatchLog({ detail, filter, gameFilter }: { detail: MatchDetail; filter: RunFilter; gameFilter: GameFilter }) {
+  const runs = detail.runs
+    .filter((run) => filter === 'all' || run.role === filter)
+    .filter((run) => gameFilter === 'all' || run.gameIndex === gameFilter);
   const steps = runs
     .flatMap((run) => run.steps.map((step) => ({ step, run })))
     .sort((a, b) => a.step.createdAt.localeCompare(b.step.createdAt));
@@ -371,8 +396,8 @@ function MatchLog({ detail, filter }: { detail: MatchDetail; filter: RunFilter }
         return (
           <article key={step.id} className="logRow">
             <div className="logLine">
-              <strong>{run.role === 'agentA' ? 'Agent A' : 'Agent B'}</strong>
-              <span>{shortModelName(run.model?.name ?? run.modelId)}</span>
+              <strong>{shortModelName(run.model?.name ?? run.modelId)}</strong>
+              <span>game {run.gameIndex} · {run.color === 'w' ? 'White' : 'Black'}</span>
               <span>attempt {step.stepIndex + 1}</span>
               <span>{actionText}</span>
             </div>
@@ -544,6 +569,23 @@ function costLabel(runs: Pick<RunRecord, 'costUsd'>[]) {
   if (total === 0) return '$0';
   if (total < 0.01) return `$${total.toFixed(4)}`;
   return `$${total.toFixed(2)}`;
+}
+
+function gameSummaries(runs: Array<RunRecord & { model?: ModelConfig }>) {
+  const indices = [...new Set(runs.map((run) => run.gameIndex ?? 1))].sort((a, b) => a - b);
+  return indices.map((gameIndex) => {
+    const gameRuns = runs.filter((run) => (run.gameIndex ?? 1) === gameIndex);
+    return {
+      gameIndex,
+      white: gameRuns.find((run) => run.color === 'w')?.model?.name ?? 'White',
+      black: gameRuns.find((run) => run.color === 'b')?.model?.name ?? 'Black',
+    };
+  });
+}
+
+function modelNameForRole(runs: Array<RunRecord & { model?: ModelConfig }>, role: RunRecord['role']) {
+  const run = runs.find((item) => item.role === role);
+  return run?.model?.name ?? run?.modelId ?? (role === 'agentA' ? 'Model 1' : 'Model 2');
 }
 
 function winnerName(match: Pick<MatchRecord, 'winnerRunId' | 'status'>, runs: RunRecord[], models: ModelConfig[]) {
