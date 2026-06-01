@@ -6,6 +6,7 @@ import type { MatchDetail, TraceStep } from '../shared/types.js';
 import { renderTaskPage } from './chromiumEnvironment.js';
 import { config } from './config.js';
 import { MatchOrchestrator } from './orchestrator.js';
+import { searchOpenRouterModels } from './openRouterModels.js';
 import { JsonStore } from './storage.js';
 
 const store = new JsonStore();
@@ -29,6 +30,17 @@ app.get('/api/bootstrap', async (_req, res, next) => {
       matches: state.matches,
       runs: state.runs,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/models/openrouter', async (req, res, next) => {
+  try {
+    const query = typeof req.query.q === 'string' ? req.query.q : '';
+    const models = await searchOpenRouterModels(query);
+    await store.upsertModels(models);
+    res.json(models);
   } catch (error) {
     next(error);
   }

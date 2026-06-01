@@ -6,6 +6,7 @@ import type {
   AppState,
   MatchDetail,
   MatchRecord,
+  ModelConfig,
   RunRecord,
   TraceStep,
 } from '../shared/types.js';
@@ -174,6 +175,16 @@ export class JsonStore {
     });
   }
 
+  async upsertModels(models: ModelConfig[]) {
+    await this.mutate((state) => {
+      const byId = new Map(state.models.map((model) => [model.id, model]));
+      for (const model of models) {
+        byId.set(model.id, { ...(byId.get(model.id) ?? {}), ...model });
+      }
+      state.models = [...byId.values()];
+    });
+  }
+
   async getRun(runId: string) {
     const state = await this.load();
     return state.runs.find((run) => run.id === runId) ?? null;
@@ -191,11 +202,9 @@ export class JsonStore {
   }
 
   private withSeeds(state: AppState): AppState {
+    const dynamicModels = (state.models ?? []).filter((model) => model.provider !== 'dummy');
     return {
-      models: mergeById(
-        (state.models ?? []).filter((model) => seedModels.some((seed) => seed.id === model.id)),
-        seedModels,
-      ),
+      models: mergeById(dynamicModels, seedModels),
       harnesses: mergeById(state.harnesses, seedHarnesses),
       tasks: seedTasks,
       matches: (state.matches ?? []).map((match) => ({
