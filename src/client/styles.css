@@ -178,6 +178,25 @@ h3 {
   gap: 10px;
 }
 
+.formIntro {
+  display: grid;
+  gap: 2px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #f8e8cf;
+}
+
+.formIntro strong {
+  font-size: 14px;
+}
+
+.formIntro span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 label,
 fieldset {
   display: grid;
@@ -259,6 +278,16 @@ button:focus-visible {
   font-size: 16px;
 }
 
+.modelSelectButton small {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .modelPicker {
   position: absolute;
   top: calc(100% + 8px);
@@ -279,6 +308,21 @@ button:focus-visible {
 .modelPicker input {
   background: #fffef8;
   height: 46px;
+}
+
+.modelPickerHead {
+  display: grid;
+  gap: 2px;
+}
+
+.modelPickerHead strong {
+  font-size: 14px;
+}
+
+.modelPickerHead span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .modelSection {
@@ -362,10 +406,40 @@ button:focus-visible {
   font-weight: 800;
 }
 
-.modelEmpty {
-  margin: 0;
+.modelState {
+  display: grid;
+  gap: 2px;
+  padding: 10px 11px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--paper) 82%, #ffffff);
+}
+
+.modelState strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.modelState span {
   color: var(--muted);
   font-size: 12px;
+  font-weight: 750;
+}
+
+.modelState.loading {
+  border-style: solid;
+  background: #f8e8cf;
+}
+
+.modelState.error {
+  border-style: solid;
+  border-color: #e0a296;
+  background: #fde5dd;
+}
+
+.modelState.error strong,
+.modelState.error span {
+  color: #762818;
 }
 
 .check {

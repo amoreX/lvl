@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AnalyticsSummary,
   AppState,
@@ -19,6 +19,9 @@ const api = {
   },
   async analytics(): Promise<AnalyticsSummary> {
     return request('/api/analytics');
+  },
+  async searchOpenRouterModels(query: string): Promise<ModelConfig[]> {
+    return request(`/api/models/openrouter?q=${encodeURIComponent(query)}`);
   },
   async createMatch(input: CreateMatchInput): Promise<MatchRecord> {
     return request('/api/matches', { method: 'POST', body: JSON.stringify(input) });
@@ -178,37 +181,53 @@ function MatchForm({
   const defaultHarness = harnesses[0]?.id ?? 'ghost-barebones';
   const defaultTask = tasks.find((task) => task.id === 'chess-full-match') ?? tasks[0];
   const selectableModels = models.filter((model) => model.provider === 'openrouter');
+  const initialStarredModelIds = loadStoredIds('lvl.starredModels');
+  const initialRecentModelIds = loadStoredIds('lvl.recentModels');
+  const defaultModelIds = preferredModelIds(selectableModels, initialStarredModelIds, initialRecentModelIds);
+  const defaultAgentA = defaultModelIds[0] ?? selectableModels[0]?.id ?? '';
+  const defaultAgentB = defaultModelIds.find((id) => id !== defaultAgentA) ?? selectableModels[1]?.id ?? defaultAgentA;
   const [form, setForm] = useState<CreateMatchInput>({
     name: defaultTask?.title ?? 'Chess full match',
     taskId: defaultTask?.id ?? '',
-    agentA: { modelId: selectableModels[0]?.id ?? '', harnessId: defaultHarness },
-    agentB: { modelId: selectableModels[1]?.id ?? selectableModels[0]?.id ?? '', harnessId: defaultHarness },
+    agentA: { modelId: defaultAgentA, harnessId: defaultHarness },
+    agentB: { modelId: defaultAgentB, harnessId: defaultHarness },
     memoryMode: 'fresh',
     runMode: 'sequential',
     maxSteps: defaultTask?.maxSteps ?? 10,
     maxToolCalls: defaultTask?.maxToolCalls ?? 30,
   });
   const [submitting, setSubmitting] = useState(false);
-  const [starredModelIds, setStarredModelIds] = useState<string[]>(() => {
-    try {
-      return JSON.parse(window.localStorage.getItem('lvl.starredModels') ?? '[]') as string[];
-    } catch {
-      return [];
-    }
-  });
+  const [starredModelIds, setStarredModelIds] = useState<string[]>(initialStarredModelIds);
+  const [recentModelIds, setRecentModelIds] = useState<string[]>(initialRecentModelIds);
 
   function toggleStarredModel(modelId: string) {
     setStarredModelIds((current) => {
       const next = current.includes(modelId) ? current.filter((id) => id !== modelId) : [modelId, ...current];
-      window.localStorage.setItem('lvl.starredModels', JSON.stringify(next));
+      saveStoredIds('lvl.starredModels', next);
       return next;
     });
+  }
+
+  function rememberModel(modelId: string) {
+    if (!modelId) return;
+    setRecentModelIds((current) => {
+      const next = [modelId, ...current.filter((id) => id !== modelId)].slice(0, 8);
+      saveStoredIds('lvl.recentModels', next);
+      return next;
+    });
+  }
+
+  function selectAgent(role: 'agentA' | 'agentB', agent: { modelId: string; harnessId: string }) {
+    rememberModel(agent.modelId);
+    setForm((current) => ({ ...current, [role]: { ...agent, harnessId: defaultHarness } }));
   }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setSubmitting(true);
     try {
+      rememberModel(form.agentA.modelId);
+      rememberModel(form.agentB.modelId);
       const match = await api.createMatch({
         ...form,
         taskId: defaultTask?.id ?? form.taskId,
@@ -223,6 +242,10 @@ function MatchForm({
 
   return (
     <form onSubmit={submit} className="form">
+      <div className="formIntro">
+        <strong>Choose two OpenRouter models</strong>
+        <span>Star favorites, reuse recent picks, or search the live catalog.</span>
+      </div>
       <label>
         Match name
         <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
@@ -232,16 +255,18 @@ function MatchForm({
           label="Model 1"
           models={selectableModels}
           starredModelIds={starredModelIds}
+          recentModelIds={recentModelIds}
           value={form.agentA}
-          onChange={(agentA) => setForm({ ...form, agentA: { ...agentA, harnessId: defaultHarness } })}
+          onChange={(agentA) => selectAgent('agentA', agentA)}
           onToggleStar={toggleStarredModel}
         />
         <ModelSearch
           label="Model 2"
           models={selectableModels}
           starredModelIds={starredModelIds}
+          recentModelIds={recentModelIds}
           value={form.agentB}
-          onChange={(agentB) => setForm({ ...form, agentB: { ...agentB, harnessId: defaultHarness } })}
+          onChange={(agentB) => selectAgent('agentB', agentB)}
           onToggleStar={toggleStarredModel}
         />
       </div>
@@ -255,7 +280,7 @@ function MatchForm({
       <p className="fieldHint">
         Fresh state sends only the current board. Context dump also sends each agent its own previous turns, raw outputs, tool calls, and score events.
       </p>
-      <button disabled={submitting}>{submitting ? 'Launching...' : 'Create and Run Match'}</button>
+      <button disabled={submitting || !form.agentA.modelId || !form.agentB.modelId}>{submitting ? 'Launching...' : 'Create and Run Match'}</button>
     </form>
   );
 }
@@ -264,6 +289,7 @@ function ModelSearch({
   label,
   models,
   starredModelIds,
+  recentModelIds,
   value,
   onChange,
   onToggleStar,
@@ -271,30 +297,92 @@ function ModelSearch({
   label: string;
   models: ModelConfig[];
   starredModelIds: string[];
+  recentModelIds: string[];
   value: { modelId: string; harnessId: string };
   onChange: (value: { modelId: string; harnessId: string }) => void;
   onToggleStar: (modelId: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
-  const selected = models.find((model) => model.id === value.modelId);
+  const rootRef = useRef<HTMLFieldSetElement | null>(null);
+  const [catalogModels, setCatalogModels] = useState<ModelConfig[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const allModels = useMemo(() => mergeModels(models, catalogModels), [models, catalogModels]);
+  const selected = allModels.find((model) => model.id === value.modelId);
   const normalized = query.trim().toLowerCase();
+
+  useEffect(() => {
+    if (!open) return;
+    function closeOnOutside(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false);
+    }
+    window.addEventListener('pointerdown', closeOnOutside);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('pointerdown', closeOnOutside);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const timeout = window.setTimeout(async () => {
+      setCatalogLoading(true);
+      try {
+        const remoteModels = await api.searchOpenRouterModels(query);
+        if (!cancelled) {
+          setCatalogModels(remoteModels);
+          setCatalogError(null);
+        }
+      } catch (caught) {
+        if (!cancelled) setCatalogError(caught instanceof Error ? caught.message : String(caught));
+      } finally {
+        if (!cancelled) setCatalogLoading(false);
+      }
+    }, normalized ? 220 : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [open, query, normalized]);
+
   const starredModels = starredModelIds
-    .map((id) => models.find((model) => model.id === id))
+    .map((id) => allModels.find((model) => model.id === id))
     .filter((model): model is ModelConfig => Boolean(model));
-  const filteredModels = models
-    .filter((model) => !normalized || `${model.name} ${model.version} ${model.defaultModel ?? ''}`.toLowerCase().includes(normalized))
-    .slice(0, normalized ? 16 : 10);
-  const starredResults = normalized ? starredModels.filter((model) => filteredModels.some((item) => item.id === model.id)) : starredModels;
+  const recentModels = recentModelIds
+    .map((id) => allModels.find((model) => model.id === id))
+    .filter((model): model is ModelConfig => Boolean(model));
+  const matchingModels = allModels
+    .filter((model) => !normalized || `${model.name} ${model.version} ${model.defaultModel ?? ''}`.toLowerCase().includes(normalized));
+  const starredResults = (normalized ? starredModels.filter((model) => matchingModels.some((item) => item.id === model.id)) : starredModels).slice(0, 5);
+  const starredSet = new Set(starredResults.map((model) => model.id));
+  const recentResults = (normalized ? recentModels.filter((model) => matchingModels.some((item) => item.id === model.id)) : recentModels)
+    .filter((model) => !starredSet.has(model.id))
+    .slice(0, 5);
+  const pinnedSet = new Set([...starredResults, ...recentResults].map((model) => model.id));
+  const filteredModels = matchingModels
+    .filter((model) => !pinnedSet.has(model.id))
+    .slice(0, normalized ? 18 : 10);
+  const hasAnyResult = Boolean(starredResults.length || recentResults.length || filteredModels.length);
   return (
-    <fieldset className="modelSearch">
+    <fieldset className="modelSearch" ref={rootRef}>
       <legend>{label}</legend>
       <button type="button" className="modelSelectButton" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
         <span>Choose model</span>
         <strong>{selected ? shortModelName(selected.name) : 'No model selected'}</strong>
+        {selected ? <small>{selected.defaultModel ?? selected.version}</small> : null}
       </button>
       {open ? (
         <div className="modelPicker">
+          <div className="modelPickerHead">
+            <strong>OpenRouter catalog</strong>
+            <span>Search by model, provider, or ID.</span>
+          </div>
           <input
             type="search"
             autoFocus
@@ -302,6 +390,8 @@ function ModelSearch({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
+          {catalogLoading ? <ModelState title="Searching OpenRouter..." body="Pulling the latest model catalog." tone="loading" /> : null}
+          {catalogError ? <ModelState title="OpenRouter search failed" body={catalogError} tone="error" /> : null}
           {starredResults.length ? (
             <ModelSection
               title="Starred"
@@ -316,10 +406,22 @@ function ModelSearch({
               }}
             />
           ) : (
-            <p className="modelEmpty">{normalized ? 'No starred matches yet.' : 'Star models to pin them here.'}</p>
+            <ModelState title={normalized ? 'No starred matches' : 'No starred models yet'} body={normalized ? 'Try a broader search or star a matching model.' : 'Use the star button beside any model to pin it here.'} />
           )}
           <ModelSection
-            title={normalized ? 'Search results' : 'All models'}
+            title="Recent"
+            models={recentResults}
+            selectedId={value.modelId}
+            starredModelIds={starredModelIds}
+            onToggleStar={onToggleStar}
+            onSelect={(modelId) => {
+              onChange({ ...value, modelId });
+              setQuery('');
+              setOpen(false);
+            }}
+          />
+          <ModelSection
+            title={normalized ? 'OpenRouter results' : 'Browse OpenRouter'}
             models={filteredModels}
             selectedId={value.modelId}
             starredModelIds={starredModelIds}
@@ -330,10 +432,48 @@ function ModelSearch({
               setOpen(false);
             }}
           />
-          {!filteredModels.length ? <p className="modelEmpty">No matching models.</p> : null}
+          {!catalogLoading && !hasAnyResult ? <ModelState title="No matching models" body="Try searching provider names like anthropic, openai, google, meta, or paste an OpenRouter model ID." /> : null}
         </div>
       ) : null}
     </fieldset>
+  );
+}
+
+function mergeModels(...groups: ModelConfig[][]) {
+  const byId = new Map<string, ModelConfig>();
+  for (const group of groups) {
+    for (const model of group) {
+      byId.set(model.id, { ...(byId.get(model.id) ?? {}), ...model });
+    }
+  }
+  return [...byId.values()];
+}
+
+function loadStoredIds(key: string) {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key) ?? '[]') as unknown;
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredIds(key: string, ids: string[]) {
+  window.localStorage.setItem(key, JSON.stringify([...new Set(ids)].slice(0, 12)));
+}
+
+function preferredModelIds(models: ModelConfig[], starredIds: string[], recentIds: string[]) {
+  const validIds = new Set(models.map((model) => model.id));
+  return [...starredIds, ...recentIds, ...models.map((model) => model.id)]
+    .filter((id, index, ids) => validIds.has(id) && ids.indexOf(id) === index);
+}
+
+function ModelState({ title, body, tone = 'empty' }: { title: string; body: string; tone?: 'empty' | 'loading' | 'error' }) {
+  return (
+    <div className={`modelState ${tone}`}>
+      <strong>{title}</strong>
+      <span>{body}</span>
+    </div>
   );
 }
 
