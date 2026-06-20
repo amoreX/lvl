@@ -8,6 +8,7 @@ import { config } from './config.js';
 import { MatchOrchestrator } from './orchestrator.js';
 import { searchOpenRouterModels } from './openRouterModels.js';
 import { JsonStore } from './storage.js';
+import { shutdownStockfish } from './stockfish.js';
 
 const store = new JsonStore();
 const orchestrator = new MatchOrchestrator(store);
@@ -182,6 +183,7 @@ async function shutdown(signal: NodeJS.Signals) {
   }, 5000);
   forceExit.unref();
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await shutdownStockfish();
   await store.close();
   process.exit(0);
 }

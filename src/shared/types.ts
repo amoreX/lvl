@@ -219,8 +219,22 @@ export type Scorecard = ScorecardBreakdown & {
   total: number;
   costUsd: number;
   latencyMs: number;
+  chess?: ChessScoreMetrics;
   failureLabels: string[];
   rubricVersion: string;
+};
+
+export type ChessScoreMetrics = {
+  movesAnalyzed: number;
+  engineMoves?: number;
+  averageStockfishDepth?: number | null;
+  averageCentipawnLoss: number | null;
+  averageAdvantageSwing: number | null;
+  worstAdvantageSwing: number | null;
+  inaccuracies: number;
+  mistakes: number;
+  blunders: number;
+  illegalMoves: number;
 };
 
 export type AppState = {

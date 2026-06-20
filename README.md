@@ -28,6 +28,8 @@ Create chess match -> Run both models through the harness -> Execute moves on Ch
 - Chess replay board with game selector, `Start`, `Latest`, slider, arrow-key stepping, live polling, PGN link, and scrollable move log.
 - PGN export for full paired matches or one game at a time.
 - Searchable OpenRouter model picker in the match form.
+- Live OpenRouter catalog search, with starred and recent model picks stored locally.
+- CLI tournament runner for repeated paired matches and aggregate leaderboard/Elo output.
 
 ## Run Locally
 
@@ -48,7 +50,9 @@ Useful checks:
 npm run typecheck
 npm run build
 npm run parser:test
+npm run stockfish:test
 npm run chess:match
+npm run tournament:run
 ```
 
 ## Environment
@@ -70,9 +74,12 @@ MODEL_REQUEST_TIMEOUT_MS=120000
 CONTEXT_WINDOW_TOKENS=200000
 CONTEXT_COMPACTION_TRIGGER_RATIO=0.70
 CONTEXT_COMPACTION_COOLDOWN_MS=30000
+STOCKFISH_REQUIRED=true
 STOCKFISH_PATH=stockfish
 STOCKFISH_DEPTH=8
+STOCKFISH_MOVETIME_MS=0
 STOCKFISH_TIMEOUT_MS=2500
+STOCKFISH_ADJUDICATION_THRESHOLD_CP=150
 MATCH_DEFAULT_TIMEOUT_MS=300000
 MATCH_DEFAULT_MAX_STEPS=40
 MATCH_DEFAULT_MAX_TOOL_CALLS=160
@@ -85,15 +92,17 @@ BROWSER_MAX_ACTIONS_PER_CALL=50
 src/client/                 React UI
 src/server/index.ts         Express API
 src/server/orchestrator.ts  Chess match runner and scoring
-src/server/stockfish.ts     Optional Stockfish UCI evaluator
+src/server/stockfish.ts     Required Stockfish UCI evaluator
 src/server/chromiumEnvironment.ts  Chromium chess board + replay page
 src/server/modelAdapters.ts Model adapters
 src/server/browserActionParser.ts Browser script/action parser
 src/server/contextCompaction.ts Harness-side context dump compaction
-src/server/storage.ts       JSON storage and analytics
+src/server/openRouterModels.ts Live OpenRouter catalog search
+src/server/storage.ts       SQLite storage and analytics
 src/server/seeds.ts         Seeded chess task/models/harness
 src/shared/types.ts         Shared protocol types
 scripts/run-chess-match.ts  CLI chess match runner
+scripts/run-tournament.ts   CLI tournament/batch runner
 ```
 
 ## API Routes
@@ -101,6 +110,7 @@ scripts/run-chess-match.ts  CLI chess match runner
 ```text
 GET  /api/health
 GET  /api/bootstrap
+GET  /api/models/openrouter?q=<query>
 GET  /api/matches
 GET  /api/matches/:id
 GET  /api/matches/:id/replay
@@ -140,12 +150,46 @@ It considers:
 
 - Win/loss/draw result.
 - Material balance at move cap.
-- Stockfish centipawn-loss move quality when `STOCKFISH_PATH` is available.
-- Heuristic chess move quality fallback when Stockfish is not installed.
+- Stockfish centipawn-loss move quality for every legal move.
+- Stockfish final-position adjudication when a game reaches the move cap.
+- Structured chess metrics on scorecards: moves analyzed, average centipawn loss, average and worst advantage swing, inaccuracies, mistakes, blunders, and illegal moves.
 - Legal move progress.
 - Illegal/incomplete move penalties.
 - Tool call count and rough efficiency.
 - Cost and latency metadata.
+
+## Tournament Runs
+
+Run every model pair for repeated paired chess matches:
+
+```bash
+npm run tournament:run
+```
+
+Useful variables:
+
+```env
+TOURNAMENT_MODELS=openrouter-gpt-4o-mini,openrouter-gemini-flash,openrouter-qwen-9b
+TOURNAMENT_ROUNDS=1
+TOURNAMENT_MAX_PLIES=24
+TOURNAMENT_MEMORY_MODE=fresh
+TOURNAMENT_RESET_STATE=false
+```
+
+The runner prints aggregate match points, Elo, average score, average quality, average CPL, illegal moves, and cost.
+
+## Remaining Work
+
+The detailed live roadmap is in `PROJECT_STATUS.md`.
+
+Current major remaining pieces:
+
+- Web UI tournament scheduler, so batch runs do not require the CLI.
+- Better chess move extraction from messy model text, SAN, and UCI before falling back to browser clicks.
+- Bundled Stockfish WASM/binary option so engine scoring works without local setup.
+- Better move-cap adjudication beyond simple material balance.
+- PGN import and replay for external games.
+- Storage compaction/archival once match volume grows.
 
 ## Data
 

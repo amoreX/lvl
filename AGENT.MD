@@ -27,7 +27,9 @@ npm run dev
 npm run typecheck
 npm run build
 npm run parser:test
+npm run stockfish:test
 npm run chess:match
+npm run tournament:run
 ```
 
 ## Important Paths
@@ -36,15 +38,17 @@ npm run chess:match
 src/client/                  React UI
 src/server/index.ts          Express API
 src/server/orchestrator.ts   Chess match runner, cancellation, scoring
-src/server/stockfish.ts      Optional Stockfish UCI evaluator
+src/server/stockfish.ts      Required Stockfish UCI evaluator
 src/server/chromiumEnvironment.ts  Chess board runtime and replay page
 src/server/modelAdapters.ts  OpenRouter adapter and internal test adapters
 src/server/browserActionParser.ts Browser action parser
 src/server/contextCompaction.ts Context dump compaction tracker
+src/server/openRouterModels.ts Live OpenRouter catalog search
 src/server/storage.ts        SQLite storage and analytics
 src/server/seeds.ts          Chess-only seed data
 src/shared/types.ts          Shared protocol types
 scripts/run-chess-match.ts   CLI chess match runner
+scripts/run-tournament.ts    CLI tournament/batch runner
 README.md                    Product/build overview
 PROJECT_STATUS.md            Current state and roadmap
 ```
@@ -57,6 +61,7 @@ PROJECT_STATUS.md            Current state and roadmap
 - Do not show run mode in the UI.
 - Do not show task selection in the UI.
 - Do not show dummy/local test models in the UI; New Match should use actual OpenRouter models only.
+- Keep live OpenRouter catalog search available through `GET /api/models/openrouter?q=<query>`.
 - Do not show seed controls in the UI; match randomness is assigned internally when a match starts.
 - Keep runtime seed/randomness backend-owned. It can support replay/environment randomness and future hurdles, but should not reappear as a normal match-creation choice.
 - Do not show non-chess games in docs, scripts, seeds, or runtime code.
@@ -113,6 +118,7 @@ npm run build
 ```text
 GET  /api/health
 GET  /api/bootstrap
+GET  /api/models/openrouter?q=<query>
 GET  /api/matches
 GET  /api/matches/:id
 GET  /api/matches/:id/replay
@@ -150,7 +156,9 @@ They should remain explainable from:
 - Game result.
 - Material balance.
 - Stockfish centipawn-loss quality when `STOCKFISH_PATH` points to a UCI binary.
-- Heuristic chess quality fallback when Stockfish is not installed.
+- Stockfish final-position adjudication at the move cap.
+- Structured chess metrics: moves analyzed, average centipawn loss, average/worst advantage swing, inaccuracies, mistakes, blunders, and illegal moves.
+- New chess matches are Stockfish-only for move quality; do not reintroduce heuristic move scoring unless the user explicitly asks.
 - Illegal/incomplete move counts.
 - Step/tool efficiency.
 - Cost and latency metadata.
@@ -172,9 +180,21 @@ For parser changes:
 npm run parser:test
 ```
 
+For Stockfish integration changes:
+
+```bash
+npm run stockfish:test
+```
+
 For runtime chess checks:
 
 ```bash
 npm run chess:match
+```
+
+For batch/tournament checks:
+
+```bash
+npm run tournament:run
 ```
 

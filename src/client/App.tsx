@@ -652,7 +652,7 @@ function PairedScoreboard({ detail, activeGame, onGameChange }: { detail: MatchD
             <a key={game.gameIndex} href={`/api/matches/${detail.match.id}/pgn?game=${game.gameIndex}`} target="_blank" rel="noreferrer">
               <strong>Game {game.gameIndex}: {gameResultLabel(runs, models)}</strong>
               <span>{shortModelName(game.white)} as White vs {shortModelName(game.black)} as Black</span>
-              <small>quality {avgQualityLabel(runs)} · illegal {illegalAttemptCount(runs)} · PGN</small>
+              <small>{chessMetricLabel(runs)} · PGN</small>
             </a>
           );
         })}
@@ -904,6 +904,29 @@ function avgQualityLabel(runs: RunRecord[]) {
   const values = runs.map((run) => run.scorecard?.chessQuality).filter((value): value is number => typeof value === 'number');
   if (!values.length) return '-';
   return `${Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)}`;
+}
+
+function chessMetricLabel(runs: RunRecord[]) {
+  const metrics = runs.map((run) => run.scorecard?.chess).filter(Boolean);
+  const avgCpl = averageNullable(metrics.map((metric) => metric?.averageCentipawnLoss ?? null));
+  const inaccuracies = metrics.reduce((total, metric) => total + (metric?.inaccuracies ?? 0), 0);
+  const mistakes = metrics.reduce((total, metric) => total + (metric?.mistakes ?? 0), 0);
+  const blunders = metrics.reduce((total, metric) => total + (metric?.blunders ?? 0), 0);
+  const illegal = metrics.length
+    ? metrics.reduce((total, metric) => total + (metric?.illegalMoves ?? 0), 0)
+    : illegalAttemptCount(runs as Array<RunRecord & { steps?: MatchDetail['runs'][number]['steps'] }>);
+  return [
+    `quality ${avgQualityLabel(runs)}`,
+    avgCpl === null ? '' : `CPL ${Math.round(avgCpl)}`,
+    `I/M/B ${inaccuracies}/${mistakes}/${blunders}`,
+    `illegal ${illegal}`,
+  ].filter(Boolean).join(' · ');
+}
+
+function averageNullable(values: Array<number | null>) {
+  const realValues = values.filter((value): value is number => typeof value === 'number');
+  if (!realValues.length) return null;
+  return realValues.reduce((sum, value) => sum + value, 0) / realValues.length;
 }
 
 function illegalAttemptCount(runs: Array<RunRecord & { steps?: MatchDetail['runs'][number]['steps'] }>) {

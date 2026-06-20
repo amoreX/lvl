@@ -15,9 +15,12 @@ The app currently supports:
 - Auto-compacting long `Context dump` histories at harness time using the Ghost/Pi-style 70% context-window policy.
 - Replaying a match on a chess board with arrow keys, `Start`, `Latest`, a slider, and live polling.
 - Exporting PGN for a full paired match or a single game.
-- Scoring legal moves with Stockfish centipawn loss when a local UCI binary is available, with heuristic fallback otherwise.
+- Scoring legal moves with Stockfish centipawn loss from a local UCI binary.
+- Adjudicating move-cap games with Stockfish final-position evaluation.
 - Viewing a scrollable move log next to the board.
 - Cancelling queued or running matches, including aborting in-flight OpenRouter requests.
+- Searching the live OpenRouter model catalog from the match form, with starred and recent picks.
+- Running CLI tournament batches across model pairs with aggregate leaderboard/Elo output.
 
 ## Commands
 
@@ -27,7 +30,9 @@ npm run dev
 npm run typecheck
 npm run build
 npm run parser:test
+npm run stockfish:test
 npm run chess:match
+npm run tournament:run
 ```
 
 ## What Is Built
@@ -36,6 +41,7 @@ npm run chess:match
 
 - Hero with embedded `lvl` logo and compact chess-only match form.
 - Searchable OpenRouter-only model selectors for Model 1 and Model 2.
+- Live OpenRouter catalog lookup, with starred/recent model picker defaults.
 - `Memory mode` selector:
   - `Fresh state`
   - `Context dump`
@@ -59,7 +65,8 @@ npm run chess:match
 - Each user-created match launches two turn-based games in parallel: A-White/B-Black and B-White/A-Black.
 - Context dump compaction is treated as harness work and excluded from run latency/timer accounting.
 - Cancellation removes queued jobs, aborts the active model request, marks match/runs cancelled, and lets Chromium cleanup run in `finally`.
-- Scorecards are generated from game result, material, illegal move counts, tool efficiency, and Stockfish-backed move quality when available.
+- Scorecards are generated from game result, illegal move counts, tool efficiency, and Stockfish-backed move quality.
+- Scorecards now include structured chess metrics: moves analyzed, average centipawn loss, average and worst advantage swing, inaccuracies, mistakes, blunders, and illegal moves.
 
 ### Storage
 
@@ -79,6 +86,7 @@ npm run chess:match
 ```text
 GET  /api/health
 GET  /api/bootstrap
+GET  /api/models/openrouter?q=<query>
 GET  /api/matches
 GET  /api/matches/:id
 GET  /api/matches/:id/replay
@@ -93,22 +101,30 @@ GET  /task-pages/chess-full-match?matchId=<matchId>&game=1
 ### Stockfish
 
 - `src/server/stockfish.ts` talks to a UCI-compatible Stockfish binary.
-- Configure it with `STOCKFISH_PATH`, `STOCKFISH_DEPTH`, and `STOCKFISH_TIMEOUT_MS`.
-- If no binary is installed, move quality falls back to the local heuristic so matches still run.
+- Configure it with `STOCKFISH_PATH`, `STOCKFISH_DEPTH`, `STOCKFISH_MOVETIME_MS`, `STOCKFISH_TIMEOUT_MS`, and `STOCKFISH_ADJUDICATION_THRESHOLD_CP`.
+- New chess matches are Stockfish-only for move quality. If the engine is unavailable or times out, the match fails instead of using heuristic scoring.
+
+### Tournament Runner
+
+- `scripts/run-tournament.ts` runs every pair in `TOURNAMENT_MODELS` for `TOURNAMENT_ROUNDS`.
+- Each created tournament match is still a paired color-swapped chess match.
+- Output includes aggregate match points, Elo, average score, average chess quality, average CPL, illegal move count, and cost.
+- Configure with `TOURNAMENT_MODELS`, `TOURNAMENT_ROUNDS`, `TOURNAMENT_MAX_PLIES`, `TOURNAMENT_MEMORY_MODE`, and `TOURNAMENT_WAIT_MS`.
 
 ## Known Limitations
 
-- No tournament scheduler yet.
-- Stockfish is optional and depends on a local binary; there is no bundled WASM engine yet.
+- No browser UI tournament scheduler yet; tournament runs are CLI-only.
+- Stockfish depends on a local binary; there is no bundled WASM engine yet.
 - Context dump is compacted automatically, but compact summaries are still approximate and should be tuned with real long-match traces.
 - Cost estimates depend on provider usage metadata where available.
 
 ## Next Useful Work
 
 - Bundle a Stockfish WASM/binary option so engine scoring works out of the box.
+- Improve chess move extraction from model text/SAN/UCI before relying on browser-click scripts.
 - Add PGN import.
-- Add tournament batches when chess evaluation needs repeated randomized runs.
+- Promote CLI tournament batches into the web UI when repeated runs become a normal workflow.
 - Add UI controls for context compaction window/threshold if needed.
-- Add better adjudication policy at move cap.
+- Tune Stockfish adjudication thresholds after real match data accumulates.
 - Add storage compaction/archival once match volume grows.
 

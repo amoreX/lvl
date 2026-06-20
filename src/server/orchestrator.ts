@@ -1,14 +1,42 @@
 import { randomUUID } from 'node:crypto';
 import { Chess, type Color, type PieceSymbol, type Square } from 'chess.js';
-import type { CreateMatchInput, MatchRecord, RunRecord, Scorecard, ScoreEvent, TaskConfig, TraceStep } from '../shared/types.js';
+import type { ChessScoreMetrics, CreateMatchInput, MatchRecord, RunRecord, Scorecard, ScoreEvent, TaskConfig, TraceStep } from '../shared/types.js';
 import { ChromiumGameEnvironment } from './chromiumEnvironment.js';
 import { config } from './config.js';
 import { ContextCompactionTracker } from './contextCompaction.js';
 import { BarebonesHarness } from './harness.js';
-import { evaluateMoveWithStockfish } from './stockfish.js';
+import { evaluateMoveWithStockfish, evaluatePositionWithStockfish } from './stockfish.js';
 import type { JsonStore } from './storage.js';
 
 type Job = { matchId: string; run: () => Promise<void> };
+type MoveQuality = {
+  score: number;
+  label: string;
+  reason: string;
+  source: 'stockfish';
+  centipawnLoss?: number;
+  bestMove?: string;
+  beforeCentipawns?: number;
+  afterCentipawns?: number;
+  advantageSwing?: number;
+  depth?: number;
+  pv?: string[];
+};
+type QualityTracker = {
+  total: number;
+  moves: number;
+  stockfishMoves: number;
+  inaccuracies: number;
+  mistakes: number;
+  blunders: number;
+  centipawnLossTotal: number;
+  centipawnLossMoves: number;
+  advantageSwingTotal: number;
+  advantageSwingMoves: number;
+  worstAdvantageSwing: number | null;
+  depthTotal: number;
+  depthMoves: number;
+};
 
 export class MatchOrchestrator {
   private queue: Job[] = [];
@@ -138,6 +166,17 @@ export class MatchOrchestrator {
         endedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
       });
+      const endedAt = new Date().toISOString();
+      for (const runId of detail.match.runIds) {
+        const run = await this.store.getRun(runId);
+        if (run && !['completed', 'failed', 'cancelled'].includes(run.status)) {
+          await this.store.updateRun(runId, {
+            status: 'failed',
+            endedAt,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     } finally {
       this.abortControllers.delete(matchId);
     }
@@ -170,9 +209,9 @@ export class MatchOrchestrator {
     const illegalCounts = { w: 0, b: 0 } satisfies Record<Color, number>;
     const compactionExcludedMs = { w: 0, b: 0 } satisfies Record<Color, number>;
     const quality = {
-      w: { total: 0, moves: 0, blunders: 0 },
-      b: { total: 0, moves: 0, blunders: 0 },
-    } satisfies Record<Color, { total: number; moves: number; blunders: number }>;
+      w: emptyQualityTracker(),
+      b: emptyQualityTracker(),
+    } satisfies Record<Color, QualityTracker>;
     let currentRunByColor = { w: whiteRun, b: blackRun } satisfies Record<Color, RunRecord>;
     const historyByRunId: Record<string, TraceStep[]> = {
       [whiteRun.id]: [],
@@ -240,6 +279,7 @@ export class MatchOrchestrator {
           scoreEvents.push(chessEvent(activeRun.id, ply, 'progress', 0, 'Harness auto-compacted own prior-turn context before this move.'));
         }
         let legalMovePlayed = false;
+        let fatalScoringError: Error | null = null;
 
         if (!proposedMove) {
           const reason = 'No complete source/destination chess move was proposed. Same player must retry with a legal move.';
@@ -256,12 +296,17 @@ export class MatchOrchestrator {
             await env.applyChessState(chessState(chess, `${reason} ${chessStatus(chess)}`));
           } else {
             legalMovePlayed = true;
-            const moveQuality = await analyzeMoveQuality(beforeFen, chess, move, color);
-            quality[color].total += moveQuality.score;
-            quality[color].moves += 1;
-            if (moveQuality.label === 'blunder') quality[color].blunders += 1;
             scoreEvents.push(chessEvent(activeRun.id, ply, 'progress', 10, `Legal move played: ${move.san}.`));
-            scoreEvents.push(chessEvent(activeRun.id, ply, 'chessQuality', 0, `Move quality ${moveQuality.label}: ${moveQuality.score}/100 (${moveQuality.reason}).`));
+            try {
+              const moveQuality = await analyzeMoveQuality(beforeFen, chess, move, color);
+              quality[color].total += moveQuality.score;
+              quality[color].moves += 1;
+              trackMoveQuality(quality[color], moveQuality);
+              scoreEvents.push(chessEvent(activeRun.id, ply, 'chessQuality', 0, moveQualityReason(moveQuality)));
+            } catch (error) {
+              fatalScoringError = error instanceof Error ? error : new Error(String(error));
+              scoreEvents.push(chessEvent(activeRun.id, ply, 'failure', -100, `Stockfish scoring failed: ${fatalScoringError.message}`));
+            }
             await env.applyChessState(chessState(chess, chessStatus(chess)));
           }
         }
@@ -295,6 +340,8 @@ export class MatchOrchestrator {
           costUsd: updatedRun.costUsd,
         });
 
+        if (fatalScoringError) throw fatalScoringError;
+
         if (!legalMovePlayed) {
           await sleep(120);
           continue;
@@ -302,7 +349,7 @@ export class MatchOrchestrator {
         await sleep(120);
       }
 
-      const result = chessResult(chess);
+      const result = await chessResult(chess);
       const whiteScorecard = chessScorecard({
         color: 'w',
         result,
@@ -310,7 +357,7 @@ export class MatchOrchestrator {
         chess,
         illegalCount: illegalCounts.w,
         qualityAverage: averageQuality(quality.w),
-        blunderCount: quality.w.blunders,
+        metrics: chessMetrics(quality.w, illegalCounts.w),
         startedAt: runStartedAt.w,
         excludedMs: compactionExcludedMs.w,
       });
@@ -321,7 +368,7 @@ export class MatchOrchestrator {
         chess,
         illegalCount: illegalCounts.b,
         qualityAverage: averageQuality(quality.b),
-        blunderCount: quality.b.blunders,
+        metrics: chessMetrics(quality.b, illegalCounts.b),
         startedAt: runStartedAt.b,
         excludedMs: compactionExcludedMs.b,
       });
@@ -488,7 +535,7 @@ function chessStatus(chess: Chess) {
   return `${chess.turn() === 'w' ? 'White' : 'Black'} to move`;
 }
 
-function chessResult(chess: Chess): { winner: Color | null; reason: string } {
+async function chessResult(chess: Chess): Promise<{ winner: Color | null; reason: string }> {
   if (chess.isCheckmate()) {
     return {
       winner: chess.turn() === 'w' ? 'b' : 'w',
@@ -496,10 +543,13 @@ function chessResult(chess: Chess): { winner: Color | null; reason: string } {
     };
   }
   if (chess.isDraw()) return { winner: null, reason: chessStatus(chess) };
-  const material = materialBalance(chess);
-  if (material > 0) return { winner: 'w', reason: 'adjudicated by material after move cap' };
-  if (material < 0) return { winner: 'b', reason: 'adjudicated by material after move cap' };
-  return { winner: null, reason: 'adjudicated draw after move cap' };
+  const evaluation = await evaluatePositionWithStockfish(chess.fen());
+  const threshold = config.stockfishAdjudicationThresholdCp;
+  const score = evaluation.centipawns;
+  const engineNote = `Stockfish ${formatCp(score)}${evaluation.bestMove ? `, best ${evaluation.bestMove}` : ''}`;
+  if (score >= threshold) return { winner: 'w', reason: `adjudicated by ${engineNote} after move cap` };
+  if (score <= -threshold) return { winner: 'b', reason: `adjudicated by ${engineNote} after move cap` };
+  return { winner: null, reason: `adjudicated draw by ${engineNote} after move cap` };
 }
 
 function materialBalance(chess: Chess) {
@@ -521,7 +571,7 @@ function chessScorecard(input: {
   chess: Chess;
   illegalCount: number;
   qualityAverage: number;
-  blunderCount: number;
+  metrics: ChessScoreMetrics;
   startedAt: number;
   excludedMs: number;
 }): Scorecard {
@@ -530,7 +580,7 @@ function chessScorecard(input: {
   const taskSuccess = won ? 100 : drew ? 50 : 0;
   const efficiency = clampScore(100 - Math.max(0, input.run.stepCount - 1) * 2);
   const progress = clampScore(50 + materialBalance(input.chess) * (input.color === 'w' ? 5 : -5) + input.run.stepCount * 2);
-  const chessQuality = clampScore(input.qualityAverage - input.blunderCount * 4);
+  const chessQuality = clampScore(input.qualityAverage - input.metrics.blunders * 4 - input.metrics.mistakes * 2 - input.metrics.inaccuracies);
   const toolUseQuality = clampScore(100 - input.illegalCount * 18);
   const robustness = 75;
   const consistency = null;
@@ -545,7 +595,9 @@ function chessScorecard(input: {
   );
   const failureLabels = won || drew ? [] : ['chess_loss'];
   if (input.illegalCount > 0) failureLabels.push('illegal_chess_move');
-  if (input.blunderCount > 0) failureLabels.push('chess_blunder');
+  if (input.metrics.inaccuracies > 0) failureLabels.push('chess_inaccuracy');
+  if (input.metrics.mistakes > 0) failureLabels.push('chess_mistake');
+  if (input.metrics.blunders > 0) failureLabels.push('chess_blunder');
   return {
     total,
     taskSuccess,
@@ -557,8 +609,9 @@ function chessScorecard(input: {
     consistency,
     costUsd: roundScore(input.run.costUsd, 6),
     latencyMs: Math.max(0, Date.now() - input.startedAt - input.excludedMs),
+    chess: input.metrics,
     failureLabels,
-    rubricVersion: `chess-0.1.0:${input.result.reason}`,
+    rubricVersion: `chess-0.2.0:${input.result.reason}`,
   };
 }
 
@@ -572,6 +625,70 @@ function chessEvent(
   return { id: randomUUID(), runId, stepIndex, dimension, delta, reason };
 }
 
+function emptyQualityTracker(): QualityTracker {
+  return {
+    total: 0,
+    moves: 0,
+    stockfishMoves: 0,
+    inaccuracies: 0,
+    mistakes: 0,
+    blunders: 0,
+    centipawnLossTotal: 0,
+    centipawnLossMoves: 0,
+    advantageSwingTotal: 0,
+    advantageSwingMoves: 0,
+    worstAdvantageSwing: null,
+    depthTotal: 0,
+    depthMoves: 0,
+  };
+}
+
+function trackMoveQuality(tracker: QualityTracker, quality: MoveQuality) {
+  if (quality.source === 'stockfish') tracker.stockfishMoves += 1;
+  if (quality.label === 'inaccuracy') tracker.inaccuracies += 1;
+  if (quality.label === 'mistake') tracker.mistakes += 1;
+  if (quality.label === 'blunder') tracker.blunders += 1;
+  if (typeof quality.centipawnLoss === 'number') {
+    tracker.centipawnLossTotal += quality.centipawnLoss;
+    tracker.centipawnLossMoves += 1;
+  }
+  if (typeof quality.advantageSwing === 'number') {
+    tracker.advantageSwingTotal += quality.advantageSwing;
+    tracker.advantageSwingMoves += 1;
+    tracker.worstAdvantageSwing = tracker.worstAdvantageSwing === null
+      ? quality.advantageSwing
+      : Math.min(tracker.worstAdvantageSwing, quality.advantageSwing);
+  }
+  if (typeof quality.depth === 'number') {
+    tracker.depthTotal += quality.depth;
+    tracker.depthMoves += 1;
+  }
+}
+
+function chessMetrics(tracker: QualityTracker, illegalMoves: number): ChessScoreMetrics {
+  return {
+    movesAnalyzed: tracker.moves,
+    engineMoves: tracker.stockfishMoves,
+    averageStockfishDepth: tracker.depthMoves ? roundScore(tracker.depthTotal / tracker.depthMoves) : null,
+    averageCentipawnLoss: tracker.centipawnLossMoves ? roundScore(tracker.centipawnLossTotal / tracker.centipawnLossMoves) : null,
+    averageAdvantageSwing: tracker.advantageSwingMoves ? roundScore(tracker.advantageSwingTotal / tracker.advantageSwingMoves) : null,
+    worstAdvantageSwing: tracker.worstAdvantageSwing === null ? null : roundScore(tracker.worstAdvantageSwing),
+    inaccuracies: tracker.inaccuracies,
+    mistakes: tracker.mistakes,
+    blunders: tracker.blunders,
+    illegalMoves,
+  };
+}
+
+function moveQualityReason(quality: MoveQuality) {
+  const metrics = [
+    typeof quality.centipawnLoss === 'number' ? `CPL ${quality.centipawnLoss}` : '',
+    typeof quality.advantageSwing === 'number' ? `swing ${quality.advantageSwing >= 0 ? '+' : ''}${quality.advantageSwing}cp` : '',
+    quality.bestMove ? `best ${quality.bestMove}` : '',
+  ].filter(Boolean).join(', ');
+  return `Move quality ${quality.label}: ${quality.score}/100${metrics ? ` (${metrics})` : ''}. ${quality.reason}.`;
+}
+
 function clampScore(value: number) {
   return Math.max(0, Math.min(100, roundScore(value)));
 }
@@ -583,41 +700,18 @@ function roundScore(value: number, digits = 2) {
 async function analyzeMoveQuality(
   beforeFen: string,
   afterChess: Chess,
-  move: { san: string; captured?: PieceSymbol; piece: PieceSymbol; to: string },
-  color: Color,
-) {
-  const engineQuality = await evaluateMoveWithStockfish(beforeFen, afterChess.fen());
-  if (engineQuality) return engineQuality;
-  const before = new Chess(beforeFen);
-  const materialDelta = (materialBalance(afterChess) - materialBalance(before)) * (color === 'w' ? 1 : -1);
-  const captureBonus = move.captured ? pieceValue(move.captured) * 4 : 0;
-  const checkBonus = move.san.includes('#') ? 22 : move.san.includes('+') ? 6 : 0;
-  const replyPenalty = opponentCanCaptureMovedPiece(afterChess, move.to, color) ? pieceValue(move.piece) * 5 : 0;
-  const mobility = Math.min(8, afterChess.moves().length / 4);
-  const score = clampScore(70 + materialDelta * 8 + captureBonus + checkBonus + mobility - replyPenalty);
-  const label = score >= 90 ? 'excellent' : score >= 75 ? 'good' : score >= 55 ? 'inaccuracy' : score >= 35 ? 'mistake' : 'blunder';
-  const reason = [
-    materialDelta ? `material ${materialDelta > 0 ? '+' : ''}${materialDelta}` : 'material stable',
-    move.captured ? `captured ${move.captured}` : '',
-    checkBonus ? 'check pressure' : '',
-    replyPenalty ? 'moved piece can be captured' : '',
-  ].filter(Boolean).join(', ');
-  return { score, label, reason: `heuristic fallback, ${reason}`, source: 'heuristic' as const };
-}
-
-function opponentCanCaptureMovedPiece(chess: Chess, square: string, mover: Color) {
-  const opponent = mover === 'w' ? 'b' : 'w';
-  if (chess.turn() !== opponent) return false;
-  return chess.moves({ verbose: true }).some((reply) => reply.to === square && Boolean(reply.captured));
-}
-
-function pieceValue(piece: PieceSymbol) {
-  const values: Record<PieceSymbol, number> = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
-  return values[piece];
+  _move: { san: string; captured?: PieceSymbol; piece: PieceSymbol; to: string },
+  _color: Color,
+): Promise<MoveQuality> {
+  return evaluateMoveWithStockfish(beforeFen, afterChess.fen());
 }
 
 function averageQuality(value: { total: number; moves: number }) {
   return value.moves ? roundScore(value.total / value.moves) : 50;
+}
+
+function formatCp(value: number) {
+  return `${value >= 0 ? '+' : ''}${Math.round(value)}cp`;
 }
 
 function randomSeed() {
