@@ -83,6 +83,7 @@ export type CreateMatchInput = {
   runMode: RunMode;
   maxSteps?: number;
   maxToolCalls?: number;
+  maxCostUsdPerRun?: number;
 };
 
 export type MatchRecord = {
@@ -95,6 +96,7 @@ export type MatchRecord = {
   status: EntityStatus;
   maxSteps: number;
   maxToolCalls: number;
+  maxCostUsdPerRun?: number;
   runIds: string[];
   winnerRunId?: string | null;
   createdAt: string;

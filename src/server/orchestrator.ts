@@ -75,6 +75,7 @@ export class MatchOrchestrator {
       status: 'queued',
       maxSteps: input.maxSteps || task.maxSteps || config.defaultMaxSteps,
       maxToolCalls: input.maxToolCalls || task.maxToolCalls || config.defaultMaxToolCalls,
+      maxCostUsdPerRun: input.maxCostUsdPerRun,
       runIds: runs.map((run) => run.id),
       winnerRunId: null,
       createdAt: now,
@@ -238,6 +239,7 @@ export class MatchOrchestrator {
 
         const color = chess.turn();
         const activeRun = currentRunByColor[color];
+        enforceRunBudget(match, activeRun);
         const harness = harnessByColor[color];
         const observation = await env.currentObservation(ply);
         const preparedContext = match.memoryMode === 'context_dump'
@@ -265,6 +267,10 @@ export class MatchOrchestrator {
         await this.store.updateRun(activeRun.id, {
           status: 'executing_tool',
           latencyMs: activeRun.latencyMs + modelOutput.latencyMs,
+          costUsd: activeRun.costUsd + modelOutput.costUsd,
+        });
+        enforceRunBudget(match, {
+          ...activeRun,
           costUsd: activeRun.costUsd + modelOutput.costUsd,
         });
 
@@ -474,6 +480,12 @@ function chessProposedMove(value: Record<string, unknown>) {
     to: record.to,
     promotion: typeof record.promotion === 'string' ? record.promotion : 'q',
   };
+}
+
+function enforceRunBudget(match: MatchRecord, run: RunRecord) {
+  const cap = match.maxCostUsdPerRun;
+  if (!cap || run.costUsd < cap) return;
+  throw new Error(`Run budget exceeded: ${run.modelId} game ${run.gameIndex} ${run.color} spent $${run.costUsd.toFixed(4)} of $${cap.toFixed(2)}.`);
 }
 
 function tryChessMove(chess: Chess, proposedMove: { from: string; to: string; promotion?: string }) {

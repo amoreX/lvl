@@ -4,6 +4,7 @@ import type { MatchDetail, RunRecord } from '../src/shared/types.js';
 import { databaseFilePath, legacyStateFilePath } from '../src/server/config.js';
 import { MatchOrchestrator } from '../src/server/orchestrator.js';
 import { JsonStore } from '../src/server/storage.js';
+import { shutdownStockfish } from '../src/server/stockfish.js';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -28,6 +29,7 @@ const models = (process.env.TOURNAMENT_MODELS || 'openrouter-gpt-4o-mini,openrou
   .filter(Boolean);
 const rounds = Number(process.env.TOURNAMENT_ROUNDS || 1);
 const maxPlies = Number(process.env.TOURNAMENT_MAX_PLIES || 24);
+const maxCostUsdPerRun = Number(process.env.TOURNAMENT_MAX_COST_USD_PER_RUN || 0);
 const waitMs = Number(process.env.TOURNAMENT_WAIT_MS || Math.max(300_000, maxPlies * rounds * models.length * 20_000));
 
 const store = new JsonStore();
@@ -53,6 +55,7 @@ async function main() {
         runMode: 'sequential',
         maxSteps: maxPlies,
         maxToolCalls: maxPlies * 6,
+        maxCostUsdPerRun: maxCostUsdPerRun > 0 ? maxCostUsdPerRun : undefined,
       });
       matchIds.push(match.id);
     }
@@ -60,7 +63,6 @@ async function main() {
 
   const details = await waitForMatches(matchIds);
   printTournament(details);
-  await store.close();
 }
 
 async function waitForMatches(matchIds: string[]) {
@@ -190,4 +192,9 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-await main();
+try {
+  await main();
+} finally {
+  await shutdownStockfish();
+  await store.close();
+}

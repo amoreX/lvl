@@ -1,13 +1,19 @@
 ToDo
 
 - Stockfish for actual evals of chess moves done by agent : ties directly to intelligence 
-	scores
+	scores [DONE]
+	
+	
+- Pilot run with a matrix of models [Test first with cheaper models] 
+	-> Run actual models then [DOING RN]
+	
+- Add money guardrails to agents [SAFETY][NEXT]
+
 - Think about whether harness should be kept barebones as that would make better model
 	evaluation , can't harden harness to suit model that ruins the concept of model 
 	evaluation i think [THINK ABOUT NIGGA ]
-- Add money guardrails to agents [SAFETY]
+
 - Think through this : Harden the tournament runner. scripts/run-tournament.ts is a working CLI prototype, but for serious battles it needs resume/checkpointing, JSON/CSV output, budget
      caps, retry policy, failure reporting, configurable concurrency/rate limits, and
      clearer separation between completed/failed/cancelled matches.
-- Pilot run with a matrix of models [Test first with cheaper models] 
-	-> Run actual models then
+

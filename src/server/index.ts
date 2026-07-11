@@ -452,4 +452,5 @@ const createMatchSchema = z.object({
   runMode: z.enum(['sequential', 'parallel']),
   maxSteps: z.number().int().positive().optional(),
   maxToolCalls: z.number().int().positive().optional(),
+  maxCostUsdPerRun: z.number().positive().optional(),
 });
