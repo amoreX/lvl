@@ -1,14 +1,17 @@
 import cors from 'cors';
 import express from 'express';
 import { Chess, type Color, type PieceSymbol, type Square } from 'chess.js';
+import fs from 'node:fs/promises';
+import { chromium } from 'playwright';
 import { z } from 'zod';
 import type { MatchDetail, TraceStep } from '../shared/types.js';
 import { renderTaskPage } from './chromiumEnvironment.js';
 import { config } from './config.js';
 import { MatchOrchestrator } from './orchestrator.js';
 import { searchOpenRouterModels } from './openRouterModels.js';
+import { openRouterKeySource, readRuntimeSettings, redactedSettings, updateRuntimeSettings } from './runtimeSettings.js';
 import { JsonStore } from './storage.js';
-import { shutdownStockfish } from './stockfish.js';
+import { evaluatePositionWithStockfish, shutdownStockfish } from './stockfish.js';
 
 const store = new JsonStore();
 const orchestrator = new MatchOrchestrator(store);
@@ -21,11 +24,37 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'lvl-api' });
 });
 
+app.get('/api/daemon/status', async (_req, res, next) => {
+  try {
+    res.json(await daemonStatus());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/settings/local', async (_req, res, next) => {
+  try {
+    res.json(redactedSettings(await readRuntimeSettings()));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/settings/local', async (req, res, next) => {
+  try {
+    const input = localSettingsSchema.parse(req.body);
+    res.json(await updateRuntimeSettings(input));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/bootstrap', async (_req, res, next) => {
   try {
     const state = await store.all();
+    const openRouterConfigured = await openRouterKeySource() !== 'missing';
     res.json({
-      models: state.models,
+      models: state.models.map((model) => model.provider === 'openrouter' ? { ...model, enabled: openRouterConfigured } : model),
       harnesses: state.harnesses,
       tasks: state.tasks,
       matches: state.matches,
@@ -454,3 +483,61 @@ const createMatchSchema = z.object({
   maxToolCalls: z.number().int().positive().optional(),
   maxCostUsdPerRun: z.number().positive().optional(),
 });
+
+const localSettingsSchema = z.object({
+  openRouterApiKey: z.string().trim().min(1).optional(),
+});
+
+let cachedDaemonStatus: { at: number; value: Awaited<ReturnType<typeof buildDaemonStatus>> } | null = null;
+
+async function daemonStatus() {
+  if (cachedDaemonStatus && Date.now() - cachedDaemonStatus.at < 10_000) {
+    return cachedDaemonStatus.value;
+  }
+  const value = await buildDaemonStatus();
+  cachedDaemonStatus = { at: Date.now(), value };
+  return value;
+}
+
+async function buildDaemonStatus() {
+  const [stockfish, browser, keySource] = await Promise.all([
+    stockfishStatus(),
+    browserStatus(),
+    openRouterKeySource(),
+  ]);
+  return {
+    connected: true,
+    service: 'lvl-daemon',
+    stockfish,
+    openRouter: {
+      configured: keySource !== 'missing',
+      source: keySource,
+    },
+    browser,
+    worker: orchestrator.status(),
+  };
+}
+
+async function stockfishStatus() {
+  try {
+    const evaluation = await evaluatePositionWithStockfish(new Chess().fen());
+    return {
+      ok: true,
+      message: `ready (${evaluation.centipawns}cp${evaluation.bestMove ? `, best ${evaluation.bestMove}` : ''})`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function browserStatus() {
+  try {
+    await fs.access(chromium.executablePath());
+    return { ok: true, message: 'chromium ready' };
+  } catch {
+    return { ok: false, message: 'chromium runtime missing; run npm run setup' };
+  }
+}

@@ -1,5 +1,6 @@
 import type { ModelConfig } from '../shared/types.js';
 import { config } from './config.js';
+import { getOpenRouterApiKey } from './runtimeSettings.js';
 import { seedModels } from './seeds.js';
 
 type OpenRouterModel = {
@@ -18,21 +19,23 @@ let cachedModels: ModelConfig[] = [];
 const cacheTtlMs = 5 * 60 * 1000;
 
 export async function searchOpenRouterModels(query: string, limit = 40) {
+  const apiKey = await getOpenRouterApiKey();
   const models = await openRouterCatalog();
   const normalized = query.trim().toLowerCase();
   const filtered = normalized
     ? models.filter((model) => `${model.name} ${model.defaultModel ?? ''} ${model.description}`.toLowerCase().includes(normalized))
     : models;
-  return filtered.slice(0, limit);
+  return filtered.slice(0, limit).map((model) => ({ ...model, enabled: Boolean(apiKey) }));
 }
 
 async function openRouterCatalog() {
   if (cachedModels.length && Date.now() - cachedAt < cacheTtlMs) return cachedModels;
+  const apiKey = await getOpenRouterApiKey();
   const headers: Record<string, string> = {
     'http-referer': config.openRouterSiteUrl,
     'x-title': config.openRouterAppName,
   };
-  if (config.openRouterApiKey) headers.authorization = `Bearer ${config.openRouterApiKey}`;
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
   const response = await fetch('https://openrouter.ai/api/v1/models', { headers });
   if (!response.ok) {
     throw new Error(`OpenRouter model search failed with ${response.status}`);
@@ -55,6 +58,6 @@ function toModelConfig(model: OpenRouterModel): ModelConfig {
     version: model.id,
     defaultModel: model.id,
     description: model.description || `OpenRouter catalog model${model.context_length ? ` with ${model.context_length.toLocaleString()} context tokens` : ''}.`,
-    enabled: Boolean(config.openRouterApiKey),
+    enabled: false,
   };
 }

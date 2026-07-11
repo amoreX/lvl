@@ -122,6 +122,14 @@ export class MatchOrchestrator {
     }
   }
 
+  status() {
+    return {
+      state: this.active > 0 ? 'running' : 'idle',
+      active: this.active,
+      queued: this.queue.length,
+    } as const;
+  }
+
   enqueueMatch(matchId: string) {
     this.queue.push({ matchId, run: async () => this.runMatch(matchId) });
     this.pump();

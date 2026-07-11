@@ -298,3 +298,25 @@ export type AnalyticsSummary = {
   }>;
   failureLabels: Record<string, number>;
 };
+
+export type DaemonStatus = {
+  connected: boolean;
+  service: string;
+  stockfish: {
+    ok: boolean;
+    message: string;
+  };
+  openRouter: {
+    configured: boolean;
+    source: 'runtime' | 'env' | 'missing';
+  };
+  browser: {
+    ok: boolean;
+    message: string;
+  };
+  worker: {
+    state: 'idle' | 'running';
+    active: number;
+    queued: number;
+  };
+};

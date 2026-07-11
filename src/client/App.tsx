@@ -3,6 +3,7 @@ import type {
   AnalyticsSummary,
   AppState,
   CreateMatchInput,
+  DaemonStatus,
   HarnessConfig,
   MatchDetail,
   MatchRecord,
@@ -19,6 +20,12 @@ const api = {
   },
   async analytics(): Promise<AnalyticsSummary> {
     return request('/api/analytics');
+  },
+  async daemonStatus(): Promise<DaemonStatus> {
+    return request('/api/daemon/status');
+  },
+  async saveLocalSettings(input: { openRouterApiKey: string }): Promise<{ openRouterApiKeyConfigured: boolean }> {
+    return request('/api/settings/local', { method: 'PUT', body: JSON.stringify(input) });
   },
   async searchOpenRouterModels(query: string): Promise<ModelConfig[]> {
     return request(`/api/models/openrouter?q=${encodeURIComponent(query)}`);
@@ -40,15 +47,17 @@ const api = {
 export function App() {
   const [data, setData] = useState<Bootstrap | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
+  const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [detail, setDetail] = useState<MatchDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
     try {
-      const [boot, summary] = await Promise.all([api.bootstrap(), api.analytics()]);
+      const [boot, summary, daemon] = await Promise.all([api.bootstrap(), api.analytics(), api.daemonStatus()]);
       setData(boot);
       setAnalytics(summary);
+      setDaemonStatus(daemon);
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -89,6 +98,12 @@ export function App() {
 
   return (
     <Shell error={error}>
+      <DaemonPanel
+        status={daemonStatus}
+        onSaved={async () => {
+          await refresh();
+        }}
+      />
       <section className="hero">
         <div className="heroCopy">
           <div className="heroBrand">
@@ -163,6 +178,84 @@ function Shell({ children, error }: { children: React.ReactNode; error?: string 
     <div className="shell">
       {error ? <div className="error">{error}</div> : null}
       {children}
+    </div>
+  );
+}
+
+function DaemonPanel({ status, onSaved }: { status: DaemonStatus | null; onSaved: () => Promise<void> }) {
+  const [openRouterApiKey, setOpenRouterApiKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const openRouterReady = Boolean(status?.openRouter.configured);
+
+  async function saveKey(event: React.FormEvent) {
+    event.preventDefault();
+    if (!openRouterApiKey.trim()) return;
+    setSaving(true);
+    try {
+      await api.saveLocalSettings({ openRouterApiKey });
+      setOpenRouterApiKey('');
+      setMessage('OpenRouter key saved locally.');
+      await onSaved();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="daemonPanel">
+      <div className="daemonHead">
+        <div>
+          <strong>Local daemon</strong>
+          <span>{status?.connected ? 'connected' : 'connecting...'}</span>
+        </div>
+        <span className={`statusDot ${status?.worker.state === 'running' ? 'running' : 'idle'}`}>
+          {status?.worker.state ?? 'unknown'}
+        </span>
+      </div>
+      <div className="daemonGrid">
+        <DaemonCheck label="Stockfish" ok={status?.stockfish.ok} detail={status?.stockfish.message ?? 'checking'} />
+        <DaemonCheck label="Browser" ok={status?.browser.ok} detail={status?.browser.message ?? 'checking'} />
+        <DaemonCheck
+          label="OpenRouter"
+          ok={openRouterReady}
+          detail={openRouterReady ? `configured via ${status?.openRouter.source}` : 'key required'}
+        />
+        <DaemonCheck
+          label="Worker"
+          ok={Boolean(status)}
+          detail={`${status?.worker.active ?? 0} active, ${status?.worker.queued ?? 0} queued`}
+        />
+      </div>
+      {!openRouterReady ? (
+        <form className="setupCard" onSubmit={saveKey}>
+          <div>
+            <strong>Bring your own OpenRouter key</strong>
+            <span>Saved only to local ignored data. It is never committed or shipped with lvl.</span>
+          </div>
+          <input
+            type="password"
+            placeholder="sk-or-..."
+            value={openRouterApiKey}
+            onChange={(event) => setOpenRouterApiKey(event.target.value)}
+            autoComplete="off"
+          />
+          <button disabled={saving || !openRouterApiKey.trim()}>{saving ? 'Saving...' : 'Save key'}</button>
+        </form>
+      ) : null}
+      {message ? <p className="setupMessage">{message}</p> : null}
+    </section>
+  );
+}
+
+function DaemonCheck({ label, ok, detail }: { label: string; ok?: boolean; detail: string }) {
+  return (
+    <div className={`daemonCheck ${ok ? 'ok' : 'warn'}`}>
+      <span>{label}</span>
+      <strong>{ok ? 'ok' : 'needs setup'}</strong>
+      <small>{detail}</small>
     </div>
   );
 }

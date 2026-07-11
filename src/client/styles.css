@@ -63,6 +63,112 @@ a:focus-visible {
   box-shadow: 0 18px 50px rgba(79, 54, 28, 0.10);
 }
 
+.daemonPanel {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: rgba(255, 250, 240, 0.92);
+  box-shadow: 0 12px 34px rgba(79, 54, 28, 0.08);
+}
+
+.daemonHead,
+.setupCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.daemonHead div,
+.setupCard div {
+  display: grid;
+  gap: 2px;
+}
+
+.daemonHead span,
+.setupCard span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.statusDot {
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: #f8e8cf;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.statusDot.running {
+  background: #dcfce7;
+  color: var(--green);
+}
+
+.daemonGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.daemonCheck {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fffaf0;
+}
+
+.daemonCheck span,
+.daemonCheck small {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.daemonCheck strong {
+  color: var(--red);
+}
+
+.daemonCheck.ok strong {
+  color: var(--green);
+}
+
+.setupCard {
+  align-items: end;
+  padding: 12px;
+  border: 1px dashed var(--amber);
+  border-radius: 18px;
+  background: #fff7e6;
+}
+
+.setupCard input {
+  max-width: 420px;
+}
+
+.setupCard button {
+  min-height: 42px;
+  border-radius: 14px;
+  padding: 9px 14px;
+  background: var(--ink);
+  color: #fff8ed;
+  font-weight: 900;
+}
+
+.setupMessage {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 800;
+}
+
 .heroBrand {
   display: flex;
   align-items: center;

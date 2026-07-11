@@ -1,6 +1,7 @@
 import type { BrowserToolInput, ModelConfig, ModelInput, ModelOutput } from '../shared/types.js';
 import { parseBrowserTool } from './browserActionParser.js';
 import { config } from './config.js';
+import { getOpenRouterApiKey } from './runtimeSettings.js';
 
 export interface ModelAdapter {
   call(model: ModelConfig, input: ModelInput): Promise<ModelOutput>;
@@ -32,8 +33,9 @@ export class DummyModelAdapter implements ModelAdapter {
 
 export class OpenRouterAdapter implements ModelAdapter {
   async call(model: ModelConfig, input: ModelInput): Promise<ModelOutput> {
-    if (!config.openRouterApiKey) {
-      throw new Error('OPENROUTER_API_KEY is not configured. Add the key to .env.local before running real model matches.');
+    const apiKey = await getOpenRouterApiKey();
+    if (!apiKey) {
+      throw new Error('OpenRouter API key is not configured. Add it in the lvl setup panel before running real model matches.');
     }
     const started = Date.now();
     const controller = new AbortController();
@@ -45,7 +47,7 @@ export class OpenRouterAdapter implements ModelAdapter {
       method: 'POST',
       signal: controller.signal,
       headers: {
-        authorization: `Bearer ${config.openRouterApiKey}`,
+        authorization: `Bearer ${apiKey}`,
         'content-type': 'application/json',
         'http-referer': config.openRouterSiteUrl,
         'x-title': config.openRouterAppName,

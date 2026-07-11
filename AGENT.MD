@@ -50,7 +50,6 @@ src/shared/types.ts          Shared protocol types
 scripts/run-chess-match.ts   CLI chess match runner
 scripts/run-tournament.ts    CLI tournament/batch runner
 README.md                    Product/build overview
-PROJECT_STATUS.md            Current state and roadmap
 ```
 
 ## Current Product Rules

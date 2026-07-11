@@ -1,39 +1,24 @@
 # lvl
 
-lvl is a local-first AI agent evaluation arena focused only on model-vs-model chess.
+lvl is a local-first arena for evaluating AI agents in model-vs-model chess matches.
 
-The current loop is:
+The goal is simple: clone the repo, start the local runner, open the site, connect your model provider key, and run battles with traceable evidence.
 
-```text
-Create chess match -> Run both models through the harness -> Execute moves on Chromium chess board -> Record trace -> Score game -> Replay board
-```
+## What It Does
 
-## Current MVP
+- Runs paired chess matches between two AI models.
+- Plays two games per match so each model gets White once.
+- Uses a browser-based chess board and validates moves with `chess.js`.
+- Scores legal moves with Stockfish-backed chess evaluation.
+- Records traces, model outputs, costs, latency, illegal moves, PGN, and replay data.
+- Stores everything locally by default in SQLite under `data/`.
+- Supports CLI tournament matrices for repeated model-vs-model runs.
 
-- Vite + React local dashboard.
-- Express API server.
-- SQLite storage under `data/`, with one-time migration from the old JSON state file when present.
-- Playwright/Chromium chess board runtime.
-- `chess.js` legal move validation.
-- Paired two-game chess matches: both selected models get one game as White.
-- No CPU opponent, no other browser games.
-- Illegal or incomplete moves are penalized and the same agent retries.
-- Match randomness is assigned internally when a match starts; there are no user-facing seed controls.
-- Match memory mode:
-  - `Fresh state`: only current board/observation is sent.
-  - `Context dump`: the active agent also receives its own prior observations, outputs, tool inputs, actions, and score events.
-- Ghost-style harness compaction for long context dumps: token estimates use a conservative `char/3` ratio and compact near 70% of usable context.
-- Match table with paired-match score, models, time, duration, and cost.
-- Trace modal with aggregate scoreboard, per-game result cards, quality average, illegal count, PGN links, and game/model filters.
-- Chess replay board with game selector, `Start`, `Latest`, slider, arrow-key stepping, live polling, PGN link, and scrollable move log.
-- PGN export for full paired matches or one game at a time.
-- Searchable OpenRouter model picker in the match form.
-- Live OpenRouter catalog search, with starred and recent model picks stored locally.
-- CLI tournament runner for repeated paired matches and aggregate leaderboard/Elo output.
-
-## Run Locally
+## Quickstart
 
 ```bash
+git clone https://github.com/amoreX/lvl.git
+cd lvl
 npm install
 npm run dev
 ```
@@ -44,161 +29,137 @@ Open:
 http://localhost:5173
 ```
 
-Useful checks:
+`npm run dev` runs setup, starts the local daemon, and starts the web app.
+
+OpenRouter is bring-your-own-key. You can configure it from the setup card in the site after the daemon connects.
+
+You can also set it manually in `.env.local`:
+
+```env
+OPENROUTER_API_KEY=your_key_here
+```
+
+The intended hosted/self-serve flow is that provider keys and runtime settings are configured from the site itself, not by editing files manually.
+
+The top of the site shows daemon health:
+
+- daemon connected/disconnected
+- Stockfish readiness
+- browser runtime readiness
+- OpenRouter key configured/missing
+- worker idle/running and queue depth
+
+## Useful Commands
 
 ```bash
-npm run typecheck
-npm run build
-npm run parser:test
-npm run stockfish:test
-npm run chess:match
-npm run tournament:run
+npm run setup            # Prepare .env.local, local dirs, and browser runtime
+npm run daemon           # Local API/worker daemon
+npm run web              # Web app, waits for daemon health
+npm run dev              # setup + daemon + web
+npm run start            # API server only, no watcher
+npm run build            # Typecheck and build web app
+npm run typecheck        # TypeScript check
+npm run parser:test      # Browser action parser test
+npm run stockfish:test   # Engine smoke test
+npm run chess:match      # Single CLI chess match
+npm run tournament:run   # CLI tournament matrix
 ```
 
 ## Environment
 
-Secrets belong in ignored local env files:
+Copy `.env.example` to `.env.local` for local secrets.
 
-```text
-.env.local
-.env
-```
-
-Useful variables:
+Required today:
 
 ```env
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=openai/gpt-4o-mini
-MODEL_MAX_TOKENS=4096
-MODEL_REQUEST_TIMEOUT_MS=120000
-CONTEXT_WINDOW_TOKENS=200000
-CONTEXT_COMPACTION_TRIGGER_RATIO=0.70
-CONTEXT_COMPACTION_COOLDOWN_MS=30000
-STOCKFISH_REQUIRED=true
-STOCKFISH_PATH=stockfish
-STOCKFISH_DEPTH=8
-STOCKFISH_MOVETIME_MS=0
-STOCKFISH_TIMEOUT_MS=2500
-STOCKFISH_ADJUDICATION_THRESHOLD_CP=150
-MATCH_DEFAULT_TIMEOUT_MS=300000
-MATCH_DEFAULT_MAX_STEPS=40
-MATCH_DEFAULT_MAX_TOOL_CALLS=160
-BROWSER_MAX_ACTIONS_PER_CALL=50
 ```
+
+Common local settings:
+
+```env
+PORT=4321
+VITE_API_URL=http://localhost:4321
+DATABASE_URL=file:./data/lvl-state.sqlite
+TOURNAMENT_MAX_COST_USD_PER_RUN=20
+```
+
+Future packaged builds should bundle the runtime dependencies and expose configuration in the site UI.
 
 ## Architecture
 
 ```text
 src/client/                 React UI
 src/server/index.ts         Express API
-src/server/orchestrator.ts  Chess match runner and scoring
-src/server/stockfish.ts     Required Stockfish UCI evaluator
-src/server/chromiumEnvironment.ts  Chromium chess board + replay page
+src/server/orchestrator.ts  Chess match runner, cancellation, scoring
+src/server/stockfish.ts     Stockfish UCI evaluator
+src/server/chromiumEnvironment.ts  Browser chess board + replay page
 src/server/modelAdapters.ts Model adapters
-src/server/browserActionParser.ts Browser script/action parser
-src/server/contextCompaction.ts Harness-side context dump compaction
-src/server/openRouterModels.ts Live OpenRouter catalog search
+src/server/browserActionParser.ts Browser action parser
+src/server/contextCompaction.ts Context dump compaction
+src/server/openRouterModels.ts OpenRouter catalog search
 src/server/storage.ts       SQLite storage and analytics
 src/server/seeds.ts         Seeded chess task/models/harness
 src/shared/types.ts         Shared protocol types
 scripts/run-chess-match.ts  CLI chess match runner
-scripts/run-tournament.ts   CLI tournament/batch runner
+scripts/run-tournament.ts   CLI tournament runner
 ```
 
 ## API Routes
 
 ```text
-GET  /api/health
-GET  /api/bootstrap
-GET  /api/models/openrouter?q=<query>
-GET  /api/matches
-GET  /api/matches/:id
-GET  /api/matches/:id/replay
-GET  /api/matches/:id/pgn
-POST /api/matches
-POST /api/matches/:id/cancel
+GET    /api/health
+GET    /api/bootstrap
+GET    /api/models/openrouter?q=<query>
+GET    /api/matches
+GET    /api/matches/:id
+GET    /api/matches/:id/replay
+GET    /api/matches/:id/pgn
+POST   /api/matches
+POST   /api/matches/:id/cancel
 DELETE /api/matches/:id
-GET  /api/analytics
-GET  /task-pages/chess-full-match?matchId=<matchId>&game=1
+GET    /api/analytics
+GET    /task-pages/chess-full-match?matchId=<matchId>&game=1
 ```
-
-## Chess Task
-
-Only one task is seeded:
-
-```text
-chess-full-match
-```
-
-Behavior:
-
-- Each created match runs two games in parallel.
-- Game 1: Model 1 is White, Model 2 is Black.
-- Game 2: Model 2 is White, Model 1 is Black.
-- Models click source square, then destination square.
-- Promotions default to queen.
-- Legal moves are validated server-side with `chess.js`.
-- The match ends by checkmate, draw, or move cap adjudication.
-- Thinking time is tracked as latency/cost but there is no chess clock forfeit.
-- Runtime randomness is generated server-side at match start. It is kept as internal metadata for the Chromium environment and future randomized hurdles.
-
-## Scoring
-
-Chess match scoring happens in `src/server/orchestrator.ts`.
-
-It considers:
-
-- Win/loss/draw result.
-- Material balance at move cap.
-- Stockfish centipawn-loss move quality for every legal move.
-- Stockfish final-position adjudication when a game reaches the move cap.
-- Structured chess metrics on scorecards: moves analyzed, average centipawn loss, average and worst advantage swing, inaccuracies, mistakes, blunders, and illegal moves.
-- Legal move progress.
-- Illegal/incomplete move penalties.
-- Tool call count and rough efficiency.
-- Cost and latency metadata.
 
 ## Tournament Runs
 
-Run every model pair for repeated paired chess matches:
+Run a small matrix from the CLI:
 
 ```bash
+TOURNAMENT_MODELS=openrouter-gpt-4o-mini,openrouter-google-gemini-flash-latest,openrouter-qwen-9b \
+TOURNAMENT_ROUNDS=1 \
+TOURNAMENT_MAX_PLIES=120 \
+TOURNAMENT_MAX_COST_USD_PER_RUN=20 \
 npm run tournament:run
 ```
 
-Useful variables:
+The runner prints match points, Elo, average score, average chess quality, average centipawn loss, illegal moves, and cost.
 
-```env
-TOURNAMENT_MODELS=openrouter-gpt-4o-mini,openrouter-gemini-flash,openrouter-qwen-9b
-TOURNAMENT_ROUNDS=1
-TOURNAMENT_MAX_PLIES=24
-TOURNAMENT_MEMORY_MODE=fresh
-TOURNAMENT_RESET_STATE=false
-```
+## Local Files
 
-The runner prints aggregate match points, Elo, average score, average quality, average CPL, illegal moves, and cost.
-
-## Remaining Work
-
-The detailed live roadmap is in `PROJECT_STATUS.md`.
-
-Current major remaining pieces:
-
-- Web UI tournament scheduler, so batch runs do not require the CLI.
-- Better chess move extraction from messy model text, SAN, and UCI before falling back to browser clicks.
-- Bundled Stockfish WASM/binary option so engine scoring works without local setup.
-- Better move-cap adjudication beyond simple material balance.
-- PGN import and replay for external games.
-- Storage compaction/archival once match volume grows.
-
-## Data
-
-Local data is intentionally ignored by git:
+These are intentionally ignored and should not be committed:
 
 ```text
+.env.local
 data/
 artifacts/
+report/
 dist/
 node_modules/
 ```
 
+`data/` contains local SQLite state. `report/` is for generated local experiment reports.
+
+## Near-Term Open Source Goals
+
+- Add a local daemon command that starts the API, worker, engine, and browser runtime.
+- Show daemon connection health in the site.
+- Move provider key and runtime configuration into the web UI.
+- Add web tournament setup and progress views.
+- Bundle runtime dependencies for normal users.
+- Add exportable JSON/CSV/PGN reports.
+
+## License
+
+MIT
