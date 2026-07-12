@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type {
   AnalyticsSummary,
   AppState,
+  HarnessConfig,
   MatchDetail,
   MatchRecord,
   ModelConfig,
@@ -11,6 +12,7 @@ import type {
   TraceStep,
 } from '../shared/types.js';
 import { databaseFilePath, legacyStateFilePath } from './config.js';
+import { loadLinkedHarnesses } from './harnessRegistry.js';
 import { emptyState, seedHarnesses, seedModels, seedTasks } from './seeds.js';
 
 export class JsonStore {
@@ -22,7 +24,8 @@ export class JsonStore {
     if (this.state) return this.state;
     await this.open();
     const stored = this.readSqliteState();
-    this.state = this.withSeeds(stored ?? await this.readLegacyJsonState() ?? emptyState());
+    const linkedHarnesses = await loadLinkedHarnesses();
+    this.state = this.withSeeds(stored ?? await this.readLegacyJsonState() ?? emptyState(), linkedHarnesses);
     await this.save();
     return this.state;
   }
@@ -97,6 +100,30 @@ export class JsonStore {
         failureLabels,
       };
     });
+    const byHarness = state.harnesses.map((harness) => {
+      const runs = completedRuns.filter((run) => run.harnessId === harness.id);
+      const failureLabels: Record<string, number> = {};
+      for (const run of runs) {
+        for (const label of run.failureLabels) {
+          failureLabels[label] = (failureLabels[label] || 0) + 1;
+        }
+      }
+      return {
+        harnessId: harness.id,
+        name: harness.name,
+        runs: runs.length,
+        wins: runs.filter((run) => run.scorecard?.taskSuccess === 100).length,
+        avgScore: average(runs.map((run) => run.scorecard?.total ?? 0)),
+        avgChessQuality: average(runs.map((run) => run.scorecard?.chessQuality ?? 0)),
+        avgCostUsd: average(runs.map((run) => run.costUsd)),
+        costEstimated: runs.some((run) => Boolean(run.costEstimated || run.scorecard?.costEstimated)),
+        avgLatencyMs: average(runs.map((run) => run.latencyMs)),
+        avgModelLatencyMs: average(runs.map((run) => run.modelLatencyMs ?? run.latencyMs)),
+        avgWallClockMs: average(runs.map((run) => run.wallClockMs ?? run.scorecard?.wallClockMs ?? run.latencyMs)),
+        illegalMoves: runs.reduce((total, run) => total + (run.scorecard?.chess?.illegalMoves ?? 0), 0),
+        failureLabels,
+      };
+    });
     const byTask = state.tasks.map((task) => {
       const runs = completedRuns.filter((run) => run.taskId === task.id);
       return {
@@ -130,6 +157,7 @@ export class JsonStore {
         avgCostUsd: average(completedRuns.map((run) => run.costUsd)),
       },
       byModel,
+      byHarness,
       byTask,
       scoreDistribution: buckets,
       failureLabels: globalFailureLabels,
@@ -201,11 +229,14 @@ export class JsonStore {
     this.db = null;
   }
 
-  private withSeeds(state: AppState): AppState {
+  private withSeeds(state: AppState, linkedHarnesses: HarnessConfig[] = []): AppState {
     const dynamicModels = (state.models ?? []).filter((model) => model.provider !== 'dummy');
+    const linkedHarnessIds = new Set(linkedHarnesses.map((harness) => harness.id));
+    const currentHarnesses = (state.harnesses ?? [])
+      .filter((harness) => harness.adapter?.type !== 'module' || linkedHarnessIds.has(harness.id));
     return {
       models: mergeById(dynamicModels, seedModels),
-      harnesses: mergeById(state.harnesses, seedHarnesses),
+      harnesses: mergeById(currentHarnesses, [...seedHarnesses, ...linkedHarnesses]),
       tasks: seedTasks,
       matches: (state.matches ?? []).map((match) => ({
         ...match,
@@ -215,6 +246,7 @@ export class JsonStore {
         ...run,
         gameIndex: run.gameIndex ?? 1,
         color: run.color ?? (run.role === 'agentA' ? 'w' : 'b'),
+        modelLatencyMs: run.modelLatencyMs ?? run.latencyMs ?? 0,
       })),
       steps: state.steps ?? [],
     };

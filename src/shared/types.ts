@@ -56,6 +56,11 @@ export type HarnessConfig = {
   description: string;
   systemPromptHash: string;
   toolSchemaHash: string;
+  adapter?: {
+    type: 'builtin' | 'module';
+    modulePath?: string;
+    exportName?: string;
+  };
 };
 
 export type TaskConfig = {
@@ -119,7 +124,10 @@ export type RunRecord = {
   stepCount: number;
   toolCallCount: number;
   costUsd: number;
+  costEstimated?: boolean;
   latencyMs: number;
+  modelLatencyMs?: number;
+  wallClockMs?: number;
   scorecard?: Scorecard;
   failureLabels: string[];
   createdAt: string;
@@ -173,6 +181,7 @@ export type ModelOutput = {
   };
   latencyMs: number;
   costUsd: number;
+  costEstimated?: boolean;
 };
 
 export type ToolCallRecord = {
@@ -220,7 +229,10 @@ export type ScorecardBreakdown = {
 export type Scorecard = ScorecardBreakdown & {
   total: number;
   costUsd: number;
+  costEstimated?: boolean;
   latencyMs: number;
+  modelLatencyMs?: number;
+  wallClockMs?: number;
   chess?: ChessScoreMetrics;
   failureLabels: string[];
   rubricVersion: string;
@@ -285,6 +297,21 @@ export type AnalyticsSummary = {
     avgLatencyMs: number;
     failureLabels: Record<string, number>;
   }>;
+  byHarness: Array<{
+    harnessId: string;
+    name: string;
+    runs: number;
+    wins: number;
+    avgScore: number;
+    avgChessQuality: number;
+    avgCostUsd: number;
+    costEstimated: boolean;
+    avgLatencyMs: number;
+    avgModelLatencyMs: number;
+    avgWallClockMs: number;
+    illegalMoves: number;
+    failureLabels: Record<string, number>;
+  }>;
   byTask: Array<{
     taskId: string;
     title: string;
@@ -313,6 +340,11 @@ export type DaemonStatus = {
   browser: {
     ok: boolean;
     message: string;
+  };
+  harnesses: {
+    linked: number;
+    configPath: string;
+    errors: string[];
   };
   worker: {
     state: 'idle' | 'running';

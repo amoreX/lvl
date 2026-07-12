@@ -1,0 +1,10 @@
+[
+  {
+    "id": "example-cautious-harness",
+    "name": "Example Cautious Harness",
+    "version": "0.1.0",
+    "description": "Example adapter that asks the model to choose legal chess moves from the current board.",
+    "modulePath": "./examples/harnesses/cautious-harness.js",
+    "exportName": "createHarness"
+  }
+]

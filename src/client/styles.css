@@ -112,7 +112,7 @@ a:focus-visible {
 
 .daemonGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -167,6 +167,40 @@ a:focus-visible {
   margin: 0;
   color: var(--muted);
   font-weight: 800;
+}
+
+.setupIssue,
+.harnessHelp {
+  display: grid;
+  gap: 6px;
+  padding: 11px 13px;
+  border: 1px dashed var(--amber);
+  border-radius: 18px;
+  background: #fff7e6;
+}
+
+.setupIssue {
+  border-color: #e0a296;
+  background: #fde5dd;
+}
+
+.setupIssue strong,
+.setupIssue li {
+  color: #762818;
+}
+
+.setupIssue span,
+.harnessHelp span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.setupIssue ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  font-weight: 750;
 }
 
 .heroBrand {
@@ -262,6 +296,10 @@ small {
 
 .matches { min-height: 520px; }
 
+.analyticsPanel {
+  margin-top: 14px;
+}
+
 h2 {
   margin: 0 0 14px;
   text-wrap: balance;
@@ -353,6 +391,10 @@ button:focus-visible {
   padding: 10px;
   background: color-mix(in srgb, var(--paper) 78%, #ffffff);
   overflow: visible;
+}
+
+.harnessPicker {
+  margin-top: 2px;
 }
 
 .modelSelectButton {
@@ -963,6 +1005,12 @@ pre {
   background: #f1e3d0;
 }
 
+@media (max-width: 980px) {
+  .daemonGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 details {
   margin: 10px 0;
 }
@@ -1053,6 +1101,10 @@ summary {
   }
 
   .heroStats {
+    grid-template-columns: 1fr;
+  }
+
+  .daemonGrid {
     grid-template-columns: 1fr;
   }
 }

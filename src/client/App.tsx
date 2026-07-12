@@ -153,6 +153,15 @@ export function App() {
             }}
           />
         </section>
+        <section className="panel analyticsPanel">
+          <div className="panelHead">
+            <div>
+              <h2>Measurements</h2>
+              <p className="muted">Scores, failures, model standings, and harness comparisons from completed runs.</p>
+            </div>
+          </div>
+          <Analytics analytics={analytics} />
+        </section>
       </main>
       {detail ? (
         <MatchModal
@@ -219,6 +228,11 @@ function DaemonPanel({ status, onSaved }: { status: DaemonStatus | null; onSaved
         <DaemonCheck label="Stockfish" ok={status?.stockfish.ok} detail={status?.stockfish.message ?? 'checking'} />
         <DaemonCheck label="Browser" ok={status?.browser.ok} detail={status?.browser.message ?? 'checking'} />
         <DaemonCheck
+          label="Harnesses"
+          ok={Boolean(status) && !status?.harnesses.errors.length}
+          detail={`${status?.harnesses.linked ?? 0} linked${status?.harnesses.errors.length ? ', needs attention' : ''}`}
+        />
+        <DaemonCheck
           label="OpenRouter"
           ok={openRouterReady}
           detail={openRouterReady ? `configured via ${status?.openRouter.source}` : 'key required'}
@@ -244,6 +258,15 @@ function DaemonPanel({ status, onSaved }: { status: DaemonStatus | null; onSaved
           />
           <button disabled={saving || !openRouterApiKey.trim()}>{saving ? 'Saving...' : 'Save key'}</button>
         </form>
+      ) : null}
+      {status?.harnesses.errors.length ? (
+        <div className="setupIssue">
+          <strong>Harness config needs attention</strong>
+          <span>Run <code>npm run harness:check</code> for the full report.</span>
+          <ul>
+            {status.harnesses.errors.slice(0, 3).map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </div>
       ) : null}
       {message ? <p className="setupMessage">{message}</p> : null}
     </section>
@@ -312,7 +335,7 @@ function MatchForm({
 
   function selectAgent(role: 'agentA' | 'agentB', agent: { modelId: string; harnessId: string }) {
     rememberModel(agent.modelId);
-    setForm((current) => ({ ...current, [role]: { ...agent, harnessId: defaultHarness } }));
+    setForm((current) => ({ ...current, [role]: agent }));
   }
 
   async function submit(event: React.FormEvent) {
@@ -347,6 +370,7 @@ function MatchForm({
         <ModelSearch
           label="Model 1"
           models={selectableModels}
+          harnesses={harnesses}
           starredModelIds={starredModelIds}
           recentModelIds={recentModelIds}
           value={form.agentA}
@@ -356,6 +380,7 @@ function MatchForm({
         <ModelSearch
           label="Model 2"
           models={selectableModels}
+          harnesses={harnesses}
           starredModelIds={starredModelIds}
           recentModelIds={recentModelIds}
           value={form.agentB}
@@ -363,6 +388,7 @@ function MatchForm({
           onToggleStar={toggleStarredModel}
         />
       </div>
+      <HarnessHelp harnesses={harnesses} />
       <label>
         Memory mode
         <select value={form.memoryMode ?? 'fresh'} onChange={(event) => setForm({ ...form, memoryMode: event.target.value as CreateMatchInput['memoryMode'] })}>
@@ -378,9 +404,22 @@ function MatchForm({
   );
 }
 
+function HarnessHelp({ harnesses }: { harnesses: HarnessConfig[] }) {
+  const linked = harnesses.filter((harness) => harness.adapter?.type === 'module');
+  return (
+    <div className="harnessHelp">
+      <strong>{linked.length ? `${linked.length} custom harness${linked.length === 1 ? '' : 'es'} linked` : 'Want to test your own harness?'}</strong>
+      <span>
+        Copy <code>examples/harness-adapters.example.json</code> to <code>data/harness-adapters.json</code>, point it at your module, run <code>npm run harness:check</code>, then restart the daemon.
+      </span>
+    </div>
+  );
+}
+
 function ModelSearch({
   label,
   models,
+  harnesses,
   starredModelIds,
   recentModelIds,
   value,
@@ -389,6 +428,7 @@ function ModelSearch({
 }: {
   label: string;
   models: ModelConfig[];
+  harnesses: HarnessConfig[];
   starredModelIds: string[];
   recentModelIds: string[];
   value: { modelId: string; harnessId: string };
@@ -528,6 +568,16 @@ function ModelSearch({
           {!catalogLoading && !hasAnyResult ? <ModelState title="No matching models" body="Try searching provider names like anthropic, openai, google, meta, or paste an OpenRouter model ID." /> : null}
         </div>
       ) : null}
+      <label className="harnessPicker">
+        Harness
+        <select value={value.harnessId} onChange={(event) => onChange({ ...value, harnessId: event.target.value })}>
+          {harnesses.map((harness) => (
+            <option key={harness.id} value={harness.id}>
+              {harness.name}
+            </option>
+          ))}
+        </select>
+      </label>
     </fieldset>
   );
 }
@@ -879,9 +929,37 @@ function Analytics({ analytics }: { analytics: AnalyticsSummary | null }) {
         <div key={model.modelId} className="analyticsRow">
           <div>
             <strong>{model.name}</strong>
-            <small>{model.runs} runs · {model.wins} wins · Elo {model.elo} · ${model.avgCostUsd.toFixed(4)} avg cost</small>
+            <small>{model.runs} runs · {model.wins} wins · Elo {model.elo} · ${model.avgCostUsd.toFixed(4)} estimated avg cost · {formatMs(model.avgLatencyMs)} active latency</small>
           </div>
           <Bar label="avg score" value={model.avgScore} />
+        </div>
+      ))}
+      <div className="chartGrid">
+        <ChartCard title="Harness score">
+          {analytics.byHarness.filter((harness) => harness.runs > 0).map((harness) => (
+            <Bar key={harness.harnessId} label={harness.name} value={harness.avgScore} suffix={`${harness.avgScore}`} />
+          ))}
+          {!analytics.byHarness.some((harness) => harness.runs > 0) ? <p className="muted">Run a match to compare harnesses.</p> : null}
+        </ChartCard>
+        <ChartCard title="Harness reliability">
+          {analytics.byHarness.filter((harness) => harness.runs > 0).map((harness) => (
+            <Bar
+              key={harness.harnessId}
+              label={harness.name}
+              value={Math.max(0, 100 - harness.illegalMoves * 10)}
+              suffix={`${harness.illegalMoves} illegal`}
+            />
+          ))}
+          {!analytics.byHarness.some((harness) => harness.runs > 0) ? <p className="muted">Illegal move counts appear here after completed runs.</p> : null}
+        </ChartCard>
+      </div>
+      {analytics.byHarness.filter((harness) => harness.runs > 0).map((harness) => (
+        <div key={harness.harnessId} className="analyticsRow">
+          <div>
+            <strong>{harness.name}</strong>
+            <small>{harness.runs} runs · {harness.wins} run wins · {formatMs(harness.avgModelLatencyMs)} model latency · {formatMs(harness.avgLatencyMs)} active latency · {formatMs(harness.avgWallClockMs)} wall-clock · ${harness.avgCostUsd.toFixed(4)}{harness.costEstimated ? ' estimated' : ''} avg cost</small>
+          </div>
+          <Bar label="avg chess quality" value={harness.avgChessQuality} />
         </div>
       ))}
       <div className="chartGrid">
@@ -942,6 +1020,14 @@ function costLabel(runs: Pick<RunRecord, 'costUsd'>[]) {
   if (total === 0) return '$0';
   if (total < 0.01) return `$${total.toFixed(4)}`;
   return `$${total.toFixed(2)}`;
+}
+
+function formatMs(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return '0s';
+  if (value < 1000) return `${Math.round(value)}ms`;
+  const seconds = value / 1000;
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 }
 
 function pairedScore(runs: RunRecord[]) {

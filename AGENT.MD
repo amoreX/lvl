@@ -27,6 +27,7 @@ npm run dev
 npm run typecheck
 npm run build
 npm run parser:test
+npm run harness:check
 npm run stockfish:test
 npm run chess:match
 npm run tournament:run
@@ -41,6 +42,7 @@ src/server/orchestrator.ts   Chess match runner, cancellation, scoring
 src/server/stockfish.ts      Required Stockfish UCI evaluator
 src/server/chromiumEnvironment.ts  Chess board runtime and replay page
 src/server/modelAdapters.ts  OpenRouter adapter and internal test adapters
+src/server/harnessRegistry.ts Local harness adapter discovery and diagnostics
 src/server/browserActionParser.ts Browser action parser
 src/server/contextCompaction.ts Context dump compaction tracker
 src/server/openRouterModels.ts Live OpenRouter catalog search
@@ -116,7 +118,10 @@ npm run build
 
 ```text
 GET  /api/health
+GET  /api/daemon/status
 GET  /api/bootstrap
+GET  /api/settings/local
+PUT  /api/settings/local
 GET  /api/models/openrouter?q=<query>
 GET  /api/matches
 GET  /api/matches/:id

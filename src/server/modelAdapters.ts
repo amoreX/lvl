@@ -27,6 +27,7 @@ export class DummyModelAdapter implements ModelAdapter {
       },
       latencyMs: Date.now() - started,
       costUsd: 0,
+      costEstimated: false,
     };
   }
 }
@@ -90,6 +91,7 @@ export class OpenRouterAdapter implements ModelAdapter {
       },
       latencyMs: Date.now() - started,
       costUsd: estimateOpenRouterCost(data.usage?.prompt_tokens ?? 0, data.usage?.completion_tokens ?? 0),
+      costEstimated: true,
     };
   }
 }

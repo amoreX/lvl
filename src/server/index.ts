@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { MatchDetail, TraceStep } from '../shared/types.js';
 import { renderTaskPage } from './chromiumEnvironment.js';
 import { config } from './config.js';
+import { checkLinkedHarnesses } from './harnessRegistry.js';
 import { MatchOrchestrator } from './orchestrator.js';
 import { searchOpenRouterModels } from './openRouterModels.js';
 import { openRouterKeySource, readRuntimeSettings, redactedSettings, updateRuntimeSettings } from './runtimeSettings.js';
@@ -500,10 +501,11 @@ async function daemonStatus() {
 }
 
 async function buildDaemonStatus() {
-  const [stockfish, browser, keySource] = await Promise.all([
+  const [stockfish, browser, keySource, harnesses] = await Promise.all([
     stockfishStatus(),
     browserStatus(),
     openRouterKeySource(),
+    harnessStatus(),
   ]);
   return {
     connected: true,
@@ -514,6 +516,7 @@ async function buildDaemonStatus() {
       source: keySource,
     },
     browser,
+    harnesses,
     worker: orchestrator.status(),
   };
 }
@@ -540,4 +543,13 @@ async function browserStatus() {
   } catch {
     return { ok: false, message: 'chromium runtime missing; run npm run setup' };
   }
+}
+
+async function harnessStatus() {
+  const report = await checkLinkedHarnesses();
+  return {
+    linked: report.harnesses.length,
+    configPath: report.configPath,
+    errors: report.errors,
+  };
 }

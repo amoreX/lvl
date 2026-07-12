@@ -4,7 +4,7 @@ import type { ChessScoreMetrics, CreateMatchInput, MatchRecord, RunRecord, Score
 import { ChromiumGameEnvironment } from './chromiumEnvironment.js';
 import { config } from './config.js';
 import { ContextCompactionTracker } from './contextCompaction.js';
-import { BarebonesHarness } from './harness.js';
+import { createHarnessAdapter, type HarnessAdapter } from './harness.js';
 import { evaluateMoveWithStockfish, evaluatePositionWithStockfish } from './stockfish.js';
 import type { JsonStore } from './storage.js';
 
@@ -209,9 +209,9 @@ export class MatchOrchestrator {
     const chess = new Chess();
     const env = new ChromiumGameEnvironment(task, match.seed);
     const harnessByColor = {
-      w: new BarebonesHarness(whiteHarnessConfig, whiteModel),
-      b: new BarebonesHarness(blackHarnessConfig, blackModel),
-    } satisfies Record<Color, BarebonesHarness>;
+      w: await createHarnessAdapter(whiteHarnessConfig, whiteModel),
+      b: await createHarnessAdapter(blackHarnessConfig, blackModel),
+    } satisfies Record<Color, HarnessAdapter>;
     const runByColor = { w: whiteRun, b: blackRun } satisfies Record<Color, RunRecord>;
     const runStartedAt = { w: Date.now(), b: Date.now() } satisfies Record<Color, number>;
     const maxPlies = Math.min(match.maxSteps || task.objective.maxPlies || 120, task.objective.maxPlies || 120);
@@ -275,7 +275,9 @@ export class MatchOrchestrator {
         await this.store.updateRun(activeRun.id, {
           status: 'executing_tool',
           latencyMs: activeRun.latencyMs + modelOutput.latencyMs,
+          modelLatencyMs: (activeRun.modelLatencyMs ?? 0) + modelOutput.latencyMs,
           costUsd: activeRun.costUsd + modelOutput.costUsd,
+          costEstimated: Boolean(activeRun.costEstimated || modelOutput.costEstimated),
         });
         enforceRunBudget(match, {
           ...activeRun,
@@ -343,7 +345,9 @@ export class MatchOrchestrator {
           stepCount: activeRun.stepCount + 1,
           toolCallCount: activeRun.toolCallCount + result.toolCall.actions.length,
           latencyMs: activeRun.latencyMs + modelOutput.latencyMs + result.toolCall.latencyMs,
+          modelLatencyMs: (activeRun.modelLatencyMs ?? 0) + modelOutput.latencyMs,
           costUsd: activeRun.costUsd + modelOutput.costUsd,
+          costEstimated: Boolean(activeRun.costEstimated || modelOutput.costEstimated),
         };
         currentRunByColor[color] = updatedRun;
         await this.store.updateRun(activeRun.id, {
@@ -351,7 +355,9 @@ export class MatchOrchestrator {
           stepCount: updatedRun.stepCount,
           toolCallCount: updatedRun.toolCallCount,
           latencyMs: updatedRun.latencyMs,
+          modelLatencyMs: updatedRun.modelLatencyMs,
           costUsd: updatedRun.costUsd,
+          costEstimated: updatedRun.costEstimated,
         });
 
         if (fatalScoringError) throw fatalScoringError;
@@ -364,6 +370,8 @@ export class MatchOrchestrator {
       }
 
       const result = await chessResult(chess);
+      const whiteWallClockMs = Math.max(0, Date.now() - runStartedAt.w - compactionExcludedMs.w);
+      const blackWallClockMs = Math.max(0, Date.now() - runStartedAt.b - compactionExcludedMs.b);
       const whiteScorecard = chessScorecard({
         color: 'w',
         result,
@@ -374,6 +382,7 @@ export class MatchOrchestrator {
         metrics: chessMetrics(quality.w, illegalCounts.w),
         startedAt: runStartedAt.w,
         excludedMs: compactionExcludedMs.w,
+        wallClockMs: whiteWallClockMs,
       });
       const blackScorecard = chessScorecard({
         color: 'b',
@@ -385,24 +394,31 @@ export class MatchOrchestrator {
         metrics: chessMetrics(quality.b, illegalCounts.b),
         startedAt: runStartedAt.b,
         excludedMs: compactionExcludedMs.b,
+        wallClockMs: blackWallClockMs,
       });
 
       const endedAt = new Date().toISOString();
       await this.store.updateRun(whiteRun.id, {
         status: 'completed',
         endedAt,
-        latencyMs: Math.max(0, Date.now() - runStartedAt.w - compactionExcludedMs.w),
+        latencyMs: currentRunByColor.w.latencyMs,
+        modelLatencyMs: currentRunByColor.w.modelLatencyMs ?? currentRunByColor.w.latencyMs,
+        wallClockMs: whiteWallClockMs,
         scorecard: whiteScorecard,
         failureLabels: whiteScorecard.failureLabels,
         costUsd: whiteScorecard.costUsd,
+        costEstimated: whiteScorecard.costEstimated,
       });
       await this.store.updateRun(blackRun.id, {
         status: 'completed',
         endedAt,
-        latencyMs: Math.max(0, Date.now() - runStartedAt.b - compactionExcludedMs.b),
+        latencyMs: currentRunByColor.b.latencyMs,
+        modelLatencyMs: currentRunByColor.b.modelLatencyMs ?? currentRunByColor.b.latencyMs,
+        wallClockMs: blackWallClockMs,
         scorecard: blackScorecard,
         failureLabels: blackScorecard.failureLabels,
         costUsd: blackScorecard.costUsd,
+        costEstimated: blackScorecard.costEstimated,
       });
     } finally {
       await env.dispose();
@@ -470,7 +486,10 @@ export class MatchOrchestrator {
       stepCount: 0,
       toolCallCount: 0,
       costUsd: 0,
+      costEstimated: false,
       latencyMs: 0,
+      modelLatencyMs: 0,
+      wallClockMs: 0,
       failureLabels: [],
       createdAt: now,
     };
@@ -594,6 +613,7 @@ function chessScorecard(input: {
   metrics: ChessScoreMetrics;
   startedAt: number;
   excludedMs: number;
+  wallClockMs: number;
 }): Scorecard {
   const won = input.result.winner === input.color;
   const drew = input.result.winner == null;
@@ -628,7 +648,10 @@ function chessScorecard(input: {
     toolUseQuality,
     consistency,
     costUsd: roundScore(input.run.costUsd, 6),
-    latencyMs: Math.max(0, Date.now() - input.startedAt - input.excludedMs),
+    costEstimated: Boolean(input.run.costEstimated),
+    latencyMs: input.run.latencyMs,
+    modelLatencyMs: input.run.modelLatencyMs ?? input.run.latencyMs,
+    wallClockMs: input.wallClockMs,
     chess: input.metrics,
     failureLabels,
     rubricVersion: `chess-0.2.0:${input.result.reason}`,

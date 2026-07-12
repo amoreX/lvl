@@ -111,7 +111,7 @@ function printTournament(details: MatchDetail[]) {
 
   const rows = [...standings.values()].sort((a, b) => b.elo - a.elo || b.matchPoints - a.matchPoints);
   console.log('\nTournament leaderboard');
-  console.log('model, played, points, elo, avgScore, avgQuality, avgCPL, illegal, cost');
+  console.log('model, played, points, elo, avgScore, avgQuality, avgCPL, illegal, estimatedCost');
   for (const row of rows) {
     console.log([
       row.modelId,
