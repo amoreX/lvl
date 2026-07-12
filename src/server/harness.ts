@@ -1,6 +1,30 @@
 import type { BrowserToolInput, HarnessConfig, ModelConfig, ModelInput, ModelOutput, Observation } from '../shared/types.js';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { config } from './config.js';
 import { adapterFor } from './modelAdapters.js';
+
+export type HarnessStepInput = {
+  runId: string;
+  seed: number;
+  stepIndex: number;
+  observation: Observation;
+  maxToolCalls: number;
+  timeoutMs: number;
+  contextDump?: string;
+  abortSignal?: AbortSignal;
+};
+
+export type HarnessAdapter = {
+  runStep(input: HarnessStepInput): Promise<ModelOutput>;
+};
+
+export type HarnessAdapterFactoryContext = {
+  harness: HarnessConfig;
+  model: ModelConfig;
+  callModel(input: ModelInput): Promise<ModelOutput>;
+  normalizeBrowserTool(tool: BrowserToolInput | undefined): BrowserToolInput;
+};
 
 export class BarebonesHarness {
   constructor(
@@ -8,16 +32,7 @@ export class BarebonesHarness {
     private readonly model: ModelConfig,
   ) {}
 
-  async runStep(input: {
-    runId: string;
-    seed: number;
-    stepIndex: number;
-    observation: Observation;
-    maxToolCalls: number;
-    timeoutMs: number;
-    contextDump?: string;
-    abortSignal?: AbortSignal;
-  }): Promise<ModelOutput> {
+  async runStep(input: HarnessStepInput): Promise<ModelOutput> {
     const modelInput: ModelInput = {
       system: this.systemPrompt(),
       observation: input.observation,
@@ -58,7 +73,14 @@ export class BarebonesHarness {
   }
 }
 
-function normalizeBrowserTool(tool: BrowserToolInput | undefined): BrowserToolInput {
+export async function createHarnessAdapter(harness: HarnessConfig, model: ModelConfig): Promise<HarnessAdapter> {
+  if (harness.adapter?.type === 'module') {
+    return loadExternalHarness(harness, model);
+  }
+  return new BarebonesHarness(harness, model);
+}
+
+export function normalizeBrowserTool(tool: BrowserToolInput | undefined): BrowserToolInput {
   if (!tool) {
     return {
       mode: 'state',
@@ -73,4 +95,26 @@ function normalizeBrowserTool(tool: BrowserToolInput | undefined): BrowserToolIn
     };
   }
   return tool;
+}
+
+async function loadExternalHarness(harness: HarnessConfig, model: ModelConfig): Promise<HarnessAdapter> {
+  const modulePath = harness.adapter?.modulePath;
+  if (!modulePath) throw new Error(`Harness ${harness.id} is missing adapter.modulePath.`);
+  const resolved = path.isAbsolute(modulePath) ? modulePath : path.resolve(modulePath);
+  const loaded = await import(pathToFileURL(resolved).toString()) as Record<string, unknown>;
+  const exportName = harness.adapter?.exportName || 'createHarness';
+  const factory = loaded[exportName] ?? loaded.default;
+  if (typeof factory !== 'function') {
+    throw new Error(`Harness ${harness.id} module must export ${exportName}() or a default factory.`);
+  }
+  const adapter = await factory({
+    harness,
+    model,
+    callModel: async (input: ModelInput) => adapterFor(model).call(model, input),
+    normalizeBrowserTool,
+  } satisfies HarnessAdapterFactoryContext);
+  if (!adapter || typeof adapter !== 'object' || typeof (adapter as HarnessAdapter).runStep !== 'function') {
+    throw new Error(`Harness ${harness.id} factory must return an object with runStep(input).`);
+  }
+  return adapter as HarnessAdapter;
 }
