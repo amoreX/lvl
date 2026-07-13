@@ -1,0 +1,24 @@
+[
+  {
+    "id": "example-chess-puzzles",
+    "title": "Example Chess Puzzles",
+    "description": "Small local puzzle pack showing the task-packs.json shape.",
+    "puzzles": [
+      {
+        "id": "mate-threat-1",
+        "title": "Opening Position Mini Match",
+        "difficulty": "easy",
+        "maxPlies": 16,
+        "instructions": "Play from the normal starting position for a short mini match. Use legal moves only."
+      },
+      {
+        "id": "endgame-king-pawn",
+        "title": "King And Pawn Endgame",
+        "difficulty": "medium",
+        "fen": "8/8/8/8/4k3/8/4K3/4P3 w - - 0 1",
+        "maxPlies": 24,
+        "instructions": "Play the king and pawn endgame from the given FEN. Use the legal moves list and try to convert or defend accurately."
+      }
+    ]
+  }
+]

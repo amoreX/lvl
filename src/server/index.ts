@@ -13,6 +13,7 @@ import { searchOpenRouterModels } from './openRouterModels.js';
 import { openRouterKeySource, readRuntimeSettings, redactedSettings, updateRuntimeSettings } from './runtimeSettings.js';
 import { JsonStore } from './storage.js';
 import { evaluatePositionWithStockfish, shutdownStockfish } from './stockfish.js';
+import { checkTaskPacks } from './taskRegistry.js';
 
 const store = new JsonStore();
 const orchestrator = new MatchOrchestrator(store);
@@ -222,7 +223,7 @@ process.once('SIGINT', (signal) => void shutdown(signal));
 process.once('SIGTERM', (signal) => void shutdown(signal));
 
 function chessReplay(detail: MatchDetail, gameIndex = 1) {
-  const chess = new Chess();
+  const chess = chessForTask(detail.task);
   const gameRuns = detail.runs.filter((run) => (run.gameIndex ?? 1) === gameIndex);
   const runsById = new Map(gameRuns.map((run) => [run.id, run]));
   const steps = detail.runs
@@ -341,7 +342,7 @@ function matchPgn(detail: MatchDetail, gameIndex?: number) {
 }
 
 function gamePgn(detail: MatchDetail, gameIndex: number) {
-  const chess = new Chess();
+  const chess = chessForTask(detail.task);
   const gameRuns = detail.runs.filter((run) => (run.gameIndex ?? 1) === gameIndex);
   const white = gameRuns.find((run) => run.color === 'w');
   const black = gameRuns.find((run) => run.color === 'b');
@@ -368,6 +369,9 @@ function gamePgn(detail: MatchDetail, gameIndex: number) {
     ['Black', shortModelName(black?.model?.name ?? black?.modelId ?? 'Black')],
     ['Result', result],
   ];
+  if (detail.task.objective.initialFen) {
+    headers.push(['SetUp', '1'], ['FEN', detail.task.objective.initialFen]);
+  }
   return `${headers.map(([key, value]) => `[${key} "${String(value).replaceAll('"', "'")}"]`).join('\n')}\n\n${chess.pgn()} ${result}`.trim();
 }
 
@@ -399,6 +403,10 @@ function pgnResult(chess: Chess, detail: MatchDetail, gameIndex: number) {
 
 function pgnDate(value: string) {
   return new Date(value).toISOString().slice(0, 10).replaceAll('-', '.');
+}
+
+function chessForTask(task: MatchDetail['task']) {
+  return task.objective.initialFen ? new Chess(task.objective.initialFen) : new Chess();
 }
 
 function proposedChessMove(step: TraceStep) {
@@ -501,11 +509,12 @@ async function daemonStatus() {
 }
 
 async function buildDaemonStatus() {
-  const [stockfish, browser, keySource, harnesses] = await Promise.all([
+  const [stockfish, browser, keySource, harnesses, taskPacks] = await Promise.all([
     stockfishStatus(),
     browserStatus(),
     openRouterKeySource(),
     harnessStatus(),
+    taskPackStatus(),
   ]);
   return {
     connected: true,
@@ -517,6 +526,7 @@ async function buildDaemonStatus() {
     },
     browser,
     harnesses,
+    taskPacks,
     worker: orchestrator.status(),
   };
 }
@@ -549,6 +559,15 @@ async function harnessStatus() {
   const report = await checkLinkedHarnesses();
   return {
     linked: report.harnesses.length,
+    configPath: report.configPath,
+    errors: report.errors,
+  };
+}
+
+async function taskPackStatus() {
+  const report = await checkTaskPacks();
+  return {
+    linked: report.tasks.length,
     configPath: report.configPath,
     errors: report.errors,
   };

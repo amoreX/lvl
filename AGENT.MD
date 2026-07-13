@@ -28,6 +28,7 @@ npm run typecheck
 npm run build
 npm run parser:test
 npm run harness:check
+npm run taskpacks:check
 npm run stockfish:test
 npm run chess:match
 npm run tournament:run

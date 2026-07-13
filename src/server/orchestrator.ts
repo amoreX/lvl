@@ -206,7 +206,7 @@ export class MatchOrchestrator {
     const blackHarnessConfig = state.harnesses.find((harness) => harness.id === blackRun.harnessId);
     if (!whiteModel || !blackModel || !whiteHarnessConfig || !blackHarnessConfig) throw new Error('Chess run dependencies missing.');
 
-    const chess = new Chess();
+    const chess = chessForTask(task);
     const env = new ChromiumGameEnvironment(task, match.seed);
     const harnessByColor = {
       w: await createHarnessAdapter(whiteHarnessConfig, whiteModel),
@@ -507,6 +507,10 @@ function chessProposedMove(value: Record<string, unknown>) {
     to: record.to,
     promotion: typeof record.promotion === 'string' ? record.promotion : 'q',
   };
+}
+
+function chessForTask(task: TaskConfig) {
+  return task.objective.initialFen ? new Chess(task.objective.initialFen) : new Chess();
 }
 
 function enforceRunBudget(match: MatchRecord, run: RunRecord) {

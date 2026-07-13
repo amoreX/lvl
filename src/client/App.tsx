@@ -233,6 +233,11 @@ function DaemonPanel({ status, onSaved }: { status: DaemonStatus | null; onSaved
           detail={`${status?.harnesses.linked ?? 0} linked${status?.harnesses.errors.length ? ', needs attention' : ''}`}
         />
         <DaemonCheck
+          label="Task packs"
+          ok={Boolean(status) && !status?.taskPacks.errors.length}
+          detail={`${status?.taskPacks.linked ?? 0} puzzles${status?.taskPacks.errors.length ? ', needs attention' : ''}`}
+        />
+        <DaemonCheck
           label="OpenRouter"
           ok={openRouterReady}
           detail={openRouterReady ? `configured via ${status?.openRouter.source}` : 'key required'}
@@ -265,6 +270,15 @@ function DaemonPanel({ status, onSaved }: { status: DaemonStatus | null; onSaved
           <span>Run <code>npm run harness:check</code> for the full report.</span>
           <ul>
             {status.harnesses.errors.slice(0, 3).map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </div>
+      ) : null}
+      {status?.taskPacks.errors.length ? (
+        <div className="setupIssue">
+          <strong>Task pack config needs attention</strong>
+          <span>Run <code>npm run taskpacks:check</code> for the full report.</span>
+          <ul>
+            {status.taskPacks.errors.slice(0, 3).map((item) => <li key={item}>{item}</li>)}
           </ul>
         </div>
       ) : null}
@@ -315,6 +329,11 @@ function MatchForm({
   const [submitting, setSubmitting] = useState(false);
   const [starredModelIds, setStarredModelIds] = useState<string[]>(initialStarredModelIds);
   const [recentModelIds, setRecentModelIds] = useState<string[]>(initialRecentModelIds);
+  const [difficultyFilter, setDifficultyFilter] = useState<'all' | TaskConfig['difficulty']>('all');
+  const [batchCount, setBatchCount] = useState(1);
+  const [batchSource, setBatchSource] = useState<'selected' | 'filtered'>('selected');
+  const visibleTasks = tasks.filter((task) => difficultyFilter === 'all' || task.difficulty === difficultyFilter);
+  const selectedTask = visibleTasks.find((task) => task.id === form.taskId) ?? defaultTask ?? visibleTasks[0];
 
   function toggleStarredModel(modelId: string) {
     setStarredModelIds((current) => {
@@ -344,13 +363,23 @@ function MatchForm({
     try {
       rememberModel(form.agentA.modelId);
       rememberModel(form.agentB.modelId);
-      const match = await api.createMatch({
-        ...form,
-        taskId: defaultTask?.id ?? form.taskId,
-        runMode: 'sequential',
-        memoryMode: form.memoryMode ?? 'fresh',
-      });
-      onCreated(match);
+      const tasksToRun = batchSource === 'filtered' && visibleTasks.length ? visibleTasks : selectedTask ? [selectedTask] : [];
+      const count = Math.max(1, Math.min(50, Math.floor(batchCount || 1)));
+      let lastMatch: MatchRecord | null = null;
+      for (let index = 0; index < count; index += 1) {
+        const task = tasksToRun[index % Math.max(tasksToRun.length, 1)];
+        if (!task) continue;
+        lastMatch = await api.createMatch({
+          ...form,
+          name: count > 1 ? `${form.name || task.title}: ${task.title} #${index + 1}` : form.name || task.title,
+          taskId: task.id,
+          runMode: 'sequential',
+          memoryMode: form.memoryMode ?? 'fresh',
+          maxSteps: task.maxSteps,
+          maxToolCalls: task.maxToolCalls,
+        });
+      }
+      if (lastMatch) onCreated(lastMatch);
     } finally {
       setSubmitting(false);
     }
@@ -366,6 +395,55 @@ function MatchForm({
         Match name
         <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
       </label>
+      <div className="compact">
+        <label>
+          Difficulty
+          <select value={difficultyFilter} onChange={(event) => setDifficultyFilter(event.target.value as typeof difficultyFilter)}>
+            <option value="all">All difficulties</option>
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+        </label>
+        <label>
+          Challenge
+          <select
+            value={selectedTask?.id ?? ''}
+            onChange={(event) => {
+              const task = tasks.find((item) => item.id === event.target.value);
+              setForm({
+                ...form,
+                taskId: event.target.value,
+                name: task?.title ?? form.name,
+                maxSteps: task?.maxSteps ?? form.maxSteps,
+                maxToolCalls: task?.maxToolCalls ?? form.maxToolCalls,
+              });
+            }}
+          >
+            {visibleTasks.map((task) => (
+              <option key={task.id} value={task.id}>
+                {task.title} · {task.difficulty}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="compact">
+        <label>
+          Batch count
+          <input type="number" min={1} max={50} value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value))} />
+        </label>
+        <label>
+          Batch source
+          <select value={batchSource} onChange={(event) => setBatchSource(event.target.value as typeof batchSource)}>
+            <option value="selected">Repeat selected challenge</option>
+            <option value="filtered">Cycle through filtered challenges</option>
+          </select>
+        </label>
+      </div>
+      <p className="fieldHint">
+        Installers can add puzzle lists with <code>data/task-packs.json</code>. Use batch count to launch repeated or multi-puzzle runs from the UI.
+      </p>
       <div className="duo">
         <ModelSearch
           label="Model 1"
@@ -399,7 +477,9 @@ function MatchForm({
       <p className="fieldHint">
         Fresh state sends only the current board. Context dump also sends each agent its own previous turns, raw outputs, tool calls, and score events.
       </p>
-      <button disabled={submitting || !form.agentA.modelId || !form.agentB.modelId}>{submitting ? 'Launching...' : 'Create and Run Match'}</button>
+      <button disabled={submitting || !form.agentA.modelId || !form.agentB.modelId || !selectedTask}>
+        {submitting ? 'Launching...' : batchCount > 1 ? `Create ${Math.min(50, Math.max(1, Math.floor(batchCount || 1)))} Matches` : 'Create and Run Match'}
+      </button>
     </form>
   );
 }

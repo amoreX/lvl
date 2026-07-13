@@ -63,6 +63,10 @@ export type HarnessConfig = {
   };
 };
 
+export type TaskSource =
+  | { type: 'seed' }
+  | { type: 'task_pack'; packId: string; puzzleId: string };
+
 export type TaskConfig = {
   id: string;
   title: string;
@@ -73,9 +77,11 @@ export type TaskConfig = {
   maxToolCalls: number;
   difficulty: 'easy' | 'medium' | 'hard';
   allowedTools: string[];
+  source?: TaskSource;
   objective: {
     kind: 'chess_match';
     maxPlies?: number;
+    initialFen?: string;
   };
 };
 
@@ -342,6 +348,11 @@ export type DaemonStatus = {
     message: string;
   };
   harnesses: {
+    linked: number;
+    configPath: string;
+    errors: string[];
+  };
+  taskPacks: {
     linked: number;
     configPath: string;
     errors: string[];

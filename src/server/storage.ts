@@ -9,11 +9,13 @@ import type {
   MatchRecord,
   ModelConfig,
   RunRecord,
+  TaskConfig,
   TraceStep,
 } from '../shared/types.js';
 import { databaseFilePath, legacyStateFilePath } from './config.js';
 import { loadLinkedHarnesses } from './harnessRegistry.js';
 import { emptyState, seedHarnesses, seedModels, seedTasks } from './seeds.js';
+import { loadLinkedTasks } from './taskRegistry.js';
 
 export class JsonStore {
   private state: AppState | null = null;
@@ -25,7 +27,8 @@ export class JsonStore {
     await this.open();
     const stored = this.readSqliteState();
     const linkedHarnesses = await loadLinkedHarnesses();
-    this.state = this.withSeeds(stored ?? await this.readLegacyJsonState() ?? emptyState(), linkedHarnesses);
+    const linkedTasks = await loadLinkedTasks();
+    this.state = this.withSeeds(stored ?? await this.readLegacyJsonState() ?? emptyState(), linkedHarnesses, linkedTasks);
     await this.save();
     return this.state;
   }
@@ -229,15 +232,18 @@ export class JsonStore {
     this.db = null;
   }
 
-  private withSeeds(state: AppState, linkedHarnesses: HarnessConfig[] = []): AppState {
+  private withSeeds(state: AppState, linkedHarnesses: HarnessConfig[] = [], linkedTasks: TaskConfig[] = []): AppState {
     const dynamicModels = (state.models ?? []).filter((model) => model.provider !== 'dummy');
     const linkedHarnessIds = new Set(linkedHarnesses.map((harness) => harness.id));
     const currentHarnesses = (state.harnesses ?? [])
       .filter((harness) => harness.adapter?.type !== 'module' || linkedHarnessIds.has(harness.id));
+    const linkedTaskIds = new Set(linkedTasks.map((task) => task.id));
+    const currentTasks = (state.tasks ?? [])
+      .filter((task) => task.source?.type !== 'task_pack' || linkedTaskIds.has(task.id));
     return {
       models: mergeById(dynamicModels, seedModels),
       harnesses: mergeById(currentHarnesses, [...seedHarnesses, ...linkedHarnesses]),
-      tasks: seedTasks,
+      tasks: mergeById(currentTasks, [...seedTasks, ...linkedTasks]),
       matches: (state.matches ?? []).map((match) => ({
         ...match,
         memoryMode: match.memoryMode ?? 'fresh',

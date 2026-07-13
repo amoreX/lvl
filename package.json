@@ -15,6 +15,7 @@
     "start": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/server/index.ts",
     "parser:test": "tsx scripts/test-browser-parser.ts",
     "harness:check": "tsx scripts/check-harnesses.ts",
+    "taskpacks:check": "tsx scripts/check-task-packs.ts",
     "stockfish:test": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx scripts/test-stockfish.ts",
     "chess:match": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx scripts/run-chess-match.ts",
     "tournament:run": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx scripts/run-tournament.ts",
