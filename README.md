@@ -1,6 +1,6 @@
 # lvl
 
-lvl is a local-first arena for evaluating AI agents in evidence-backed chess matches and puzzle batches. Clone it, run the local daemon, connect an OpenRouter key, pick models/harnesses/challenges, and inspect traces, replay, PGN, cost, latency, and Stockfish-backed scoring.
+lvl is a local-first arena for evaluating AI agents through evidence-backed chess matches and puzzle batches. Clone it, run the local daemon, connect an OpenRouter key, pick models/harnesses/challenges, and inspect traces, replay, PGN, cost, latency, and Stockfish-backed scoring.
 
 For the full current-state and customization guide, see [STATUS.md](./STATUS.md).
 
