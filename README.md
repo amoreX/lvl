@@ -17,7 +17,7 @@ For the full current-state and customization guide, see [STATUS.md](./STATUS.md)
 
 Prerequisites:
 
-- Node.js with `node:sqlite` support.
+- Node.js with `node:sqlite` support (Node.js 22.5+).
 - A Stockfish UCI binary available as `stockfish` on `PATH`, or configured with `STOCKFISH_PATH`.
 - An OpenRouter API key for real model matches.
 
